@@ -17,6 +17,7 @@ export interface SessionContext {
     createdAt: number;
     lastActive: number;
     eventBuffer: EventBuffer;
+    steeringQueue: string[];  // FIFO queue for human steering messages
     serverInfo?: {
         name?: string;
         version?: string;
@@ -179,6 +180,7 @@ class SessionRegistry {
             createdAt: Date.now(),
             lastActive: Date.now(),
             eventBuffer,
+            steeringQueue: [],
             serverInfo: serverInfo ? {
                 name: serverInfo.name,
                 version: serverInfo.version,
@@ -250,6 +252,51 @@ class SessionRegistry {
      */
     has(sessionId: string): boolean {
         return this.sessions.has(sessionId);
+    }
+
+    /**
+     * Inject a steering message into a session's queue
+     */
+    injectSteering(sessionId: string, message: string): void {
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+            throw new Error(`Session not found: ${sessionId}`);
+        }
+        session.steeringQueue.push(message);
+
+        // Also log to event buffer for observability
+        session.eventBuffer.push({
+            type: 'steering' as const,
+            data: { message },
+        });
+    }
+
+    /**
+     * Drain all pending steering messages from a session
+     * Returns the messages and clears the queue
+     */
+    drainSteering(sessionId: string): string[] {
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+            return [];
+        }
+        const messages = [...session.steeringQueue];
+        session.steeringQueue = [];
+        return messages;
+    }
+
+    /**
+     * Get the most recently active session ID
+     * Used for targeting when no explicit session_id is provided
+     */
+    getMostRecentSessionId(): string | undefined {
+        let mostRecent: SessionContext | undefined;
+        for (const session of this.sessions.values()) {
+            if (!mostRecent || session.lastActive > mostRecent.lastActive) {
+                mostRecent = session;
+            }
+        }
+        return mostRecent?.id;
     }
 }
 

@@ -117,7 +117,7 @@ const TOOLS: Tool[] = [
         },
         types: {
           type: "array",
-          items: { type: "string", enum: ["notification", "traffic_in", "traffic_out", "error"] },
+          items: { type: "string", enum: ["notification", "traffic_in", "traffic_out", "error", "steering"] },
           description: "Filter by event types. If omitted, returns all types.",
         },
         limit: {
@@ -126,6 +126,24 @@ const TOOLS: Tool[] = [
         },
       },
       required: ["session_id"],
+    },
+  },
+  {
+    name: "insp_inject_steering",
+    description: "Inject a steering message into a session. The message will be appended to the next tool response for that session. Used by humans to provide guidance to the LLM.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        session_id: {
+          type: "string",
+          description: "Target session ID. If omitted, targets the most recently active session.",
+        },
+        message: {
+          type: "string",
+          description: "The steering message to inject.",
+        },
+      },
+      required: ["message"],
     },
   },
   // ============================================
@@ -299,6 +317,27 @@ async function handleToolCall(
       };
     }
 
+    case "insp_inject_steering": {
+      const message = args.message as string;
+      if (!message) {
+        throw new Error("message is required");
+      }
+      // Use provided session_id or fall back to most recent
+      let targetSessionId = args.session_id as string | undefined;
+      if (!targetSessionId) {
+        targetSessionId = sessionRegistry.getMostRecentSessionId();
+        if (!targetSessionId) {
+          throw new Error("No active sessions. Create one with insp_connect first.");
+        }
+      }
+      sessionRegistry.injectSteering(targetSessionId, message);
+      return {
+        success: true,
+        session_id: targetSessionId,
+        message: `Steering message queued. It will appear in the next tool response for session ${targetSessionId}.`,
+      };
+    }
+
     // ============================================
     // Existing Tools (updated for hybrid mode)
     // ============================================
@@ -336,6 +375,91 @@ async function handleToolCall(
   }
 }
 
+import { createServer } from "http";
+
+const STEERING_HTTP_PORT = 9847;
+
+/**
+ * Start HTTP server for external steering access
+ * Allows humans to inject steering messages via HTTP POST
+ */
+function startSteeringHttpServer(): void {
+  const httpServer = createServer((req, res) => {
+    // CORS headers for local development
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(200);
+      res.end();
+      return;
+    }
+
+    // GET /api/sessions - list active sessions
+    if (req.method === "GET" && req.url === "/api/sessions") {
+      const sessions = sessionRegistry.list();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ sessions, count: sessions.length }));
+      return;
+    }
+
+    // POST /api/steer - inject steering message
+    if (req.method === "POST" && req.url === "/api/steer") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const { session_id, message } = JSON.parse(body);
+          if (!message) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "message is required" }));
+            return;
+          }
+
+          let targetSessionId = session_id;
+          if (!targetSessionId) {
+            targetSessionId = sessionRegistry.getMostRecentSessionId();
+            if (!targetSessionId) {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "No active sessions" }));
+              return;
+            }
+          }
+
+          sessionRegistry.injectSteering(targetSessionId, message);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            success: true,
+            session_id: targetSessionId,
+            message: "Steering message queued"
+          }));
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "Invalid JSON body" }));
+        }
+      });
+      return;
+    }
+
+    // Default: 404
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+  });
+
+  httpServer.listen(STEERING_HTTP_PORT, "127.0.0.1", () => {
+    console.error(`[mcp-inspector] Steering HTTP server running on http://127.0.0.1:${STEERING_HTTP_PORT}`);
+  });
+
+  httpServer.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`[mcp-inspector] Warning: Steering port ${STEERING_HTTP_PORT} in use, steering disabled`);
+    } else {
+      console.error(`[mcp-inspector] Steering server error:`, error.message);
+    }
+  });
+}
+
 /**
  * Main server entry point
  */
@@ -353,13 +477,29 @@ async function main(): Promise<void> {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const sessionId = (args as Record<string, unknown>)?.session_id as string | undefined;
     console.error(`[mcp-inspector] Tool called: ${name}`);
 
     try {
       const result = await handleToolCall(name, (args || {}) as Record<string, unknown>);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
+
+      const content: Array<{ type: string; text: string }> = [
+        { type: "text", text: JSON.stringify(result, null, 2) }
+      ];
+
+      // Append steering messages if using a session (piggybacked delivery)
+      // Skip for insp_inject_steering to prevent immediate consumption
+      if (sessionId && name !== "insp_inject_steering") {
+        const steeringMessages = sessionRegistry.drainSteering(sessionId);
+        if (steeringMessages.length > 0) {
+          content.push({
+            type: "text",
+            text: `\n⚡ STEERING from human:\n${steeringMessages.join('\n')}`,
+          });
+        }
+      }
+
+      return { content };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[mcp-inspector] Error: ${message}`);
@@ -373,6 +513,9 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("[mcp-inspector] Server running on stdio");
+
+  // Start HTTP server for external steering access
+  startSteeringHttpServer();
 
   process.on("SIGINT", () => {
     console.error("[mcp-inspector] Shutting down...");

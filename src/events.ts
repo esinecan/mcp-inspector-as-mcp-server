@@ -3,7 +3,7 @@
  * Captures notifications, traffic, and errors in a ring buffer
  */
 
-export type EventType = 'notification' | 'traffic_in' | 'traffic_out' | 'error';
+export type EventType = 'notification' | 'traffic_in' | 'traffic_out' | 'error' | 'steering';
 
 export interface BufferedEvent {
     timestamp: number;

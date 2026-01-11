@@ -106,10 +106,19 @@ export function createTracingTransport(
 
 /**
  * Transport wrapper that intercepts send/receive and logs to EventBuffer
+ * 
+ * IMPORTANT: The MCP SDK sets `onmessage`/`onerror`/`onclose` handlers AFTER
+ * calling `start()`. We use getters/setters to intercept these and wrap them
+ * dynamically, ensuring our tracing logic runs alongside the SDK's handlers.
  */
 class TracingTransportWrapper implements Transport {
   private inner: Transport;
   private eventBuffer: EventBuffer;
+
+  // Store our own handlers (set by consuming code after our handlers)
+  private _onclose?: () => void;
+  private _onerror?: (error: Error) => void;
+  private _onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
 
   constructor(inner: Transport, eventBuffer: EventBuffer) {
     this.inner = inner;
@@ -117,66 +126,7 @@ class TracingTransportWrapper implements Transport {
   }
 
   async start(): Promise<void> {
-    // Wrap the inner's onmessage to log incoming traffic
-    const originalOnMessage = this.inner.onmessage;
-    this.inner.onmessage = <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => {
-      // Log incoming traffic
-      this.eventBuffer.push({
-        type: 'traffic_in',
-        data: {
-          message,
-          extra,
-        },
-      });
-
-      // Forward to original handler
-      if (originalOnMessage) {
-        originalOnMessage(message, extra);
-      }
-
-      // Also call our own onmessage if set
-      if (this.onmessage) {
-        this.onmessage(message, extra);
-      }
-    };
-
-    // Wrap error handler
-    const originalOnError = this.inner.onerror;
-    this.inner.onerror = (error: Error) => {
-      // Log error
-      this.eventBuffer.push({
-        type: 'error',
-        data: {
-          message: error.message,
-          stack: error.stack,
-        },
-      });
-
-      // Forward to original handler
-      if (originalOnError) {
-        originalOnError(error);
-      }
-
-      // Also call our own onerror if set
-      if (this.onerror) {
-        this.onerror(error);
-      }
-    };
-
-    // Wrap close handler
-    const originalOnClose = this.inner.onclose;
-    this.inner.onclose = () => {
-      // Forward to original handler
-      if (originalOnClose) {
-        originalOnClose();
-      }
-
-      // Also call our own onclose if set
-      if (this.onclose) {
-        this.onclose();
-      }
-    };
-
+    // Just start the inner transport - handlers are set up via getters/setters
     return this.inner.start();
   }
 
@@ -197,10 +147,57 @@ class TracingTransportWrapper implements Transport {
     return this.inner.close();
   }
 
-  // Callbacks - these are set by the Protocol class
-  onclose?: () => void;
-  onerror?: (error: Error) => void;
-  onmessage?: <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void;
+  // Use getters/setters to intercept handler assignment and wrap with tracing
+
+  get onclose(): (() => void) | undefined {
+    return this._onclose;
+  }
+
+  set onclose(handler: (() => void) | undefined) {
+    this._onclose = handler;
+    // Wrap and forward to inner transport
+    this.inner.onclose = handler ? () => {
+      handler();
+    } : undefined;
+  }
+
+  get onerror(): ((error: Error) => void) | undefined {
+    return this._onerror;
+  }
+
+  set onerror(handler: ((error: Error) => void) | undefined) {
+    this._onerror = handler;
+    // Wrap with error logging and forward
+    this.inner.onerror = handler ? (error: Error) => {
+      this.eventBuffer.push({
+        type: 'error',
+        data: {
+          message: error.message,
+          stack: error.stack,
+        },
+      });
+      handler(error);
+    } : undefined;
+  }
+
+  get onmessage(): (<T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void) | undefined {
+    return this._onmessage;
+  }
+
+  set onmessage(handler: (<T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void) | undefined) {
+    this._onmessage = handler;
+    // Wrap with traffic logging and forward
+    this.inner.onmessage = handler ? <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => {
+      this.eventBuffer.push({
+        type: 'traffic_in',
+        data: {
+          message,
+          extra,
+        },
+      });
+      handler(message, extra);
+    } : undefined;
+  }
 
   // Passthrough properties
   get sessionId(): string | undefined {
