@@ -205,12 +205,15 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 ## Architecture
 
 ```
-src/
-├── server.ts     # MCP server exposing inspector tools
-├── client.ts     # Client wrapper (hybrid stateless/session mode)
-├── transport.ts  # Transport factory (stdio, SSE, HTTP)
-├── session.ts    # SessionRegistry with GC (30-min TTL)
-└── events.ts     # EventBuffer (ring buffer for notifications)
+├── src/
+│   ├── server.ts     # MCP server exposing inspector tools
+│   ├── client.ts     # Client wrapper (hybrid stateless/session mode)
+│   ├── transport.ts  # Transport factory (stdio, SSE, HTTP) + TracingWrapper
+│   ├── session.ts    # SessionRegistry with GC (30-min TTL)
+│   └── events.ts     # EventBuffer (ring buffer for notifications)
+├── bin/
+│   └── mcp-steer.mjs # CLI tool for human steering
+└── tests/            # Ad-hoc test scripts (run with npx tsx)
 ```
 
 ## Why This Exists
