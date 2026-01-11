@@ -45,6 +45,7 @@ Add to your MCP config. While there are slight variances between different harne
 | `insp_disconnect` | Close a persistent session and release resources. |
 | `insp_list_sessions` | List all active sessions with their status and idle time. |
 | `insp_read_events` | Read buffered events (notifications, traffic, errors) from a session. |
+| `insp_inject_steering` | Inject a human steering message into a session's queue. |
 
 #### Inspection Tools
 
@@ -88,6 +89,91 @@ For debugging stateful server behavior, use persistent sessions:
 
 Sessions auto-close after 30 minutes of inactivity.
 
+## Human Steering & Observability
+
+The inspector enables **human-in-the-loop** workflows where you can observe and guide LLM-driven MCP testing in real-time.
+
+### How It Works
+
+```
+┌─────────────┐     MCP calls      ┌─────────────────┐     forwards     ┌─────────────┐
+│   LLM Agent │ ◄────────────────► │  MCP Inspector  │ ◄──────────────► │  Target MCP │
+│  (Antigravity)                   │    (v2.0)       │                  │   Server    │
+└─────────────┘                    └────────┬────────┘                  └─────────────┘
+                                            │
+                                   Events logged to
+                                   session EventBuffer
+                                            │
+                    ┌───────────────────────┼───────────────────────┐
+                    │                       │                       │
+                    ▼                       ▼                       ▼
+            insp_read_events         HTTP :9847/api          mcp-steer CLI
+            (LLM reads events)       (external access)       (human injection)
+```
+
+### Viewing Activity
+
+**Via LLM:** The agent can call `insp_read_events` to see what's happening:
+```json
+{
+  "session_id": "sess_abc123",
+  "types": ["traffic_in", "traffic_out"],
+  "limit": 20
+}
+```
+
+**Via HTTP:** Query the steering API directly:
+```bash
+curl http://127.0.0.1:9847/api/sessions
+```
+
+### Steering the Agent
+
+Inject guidance messages that appear in the LLM's next tool response.
+
+**Using the CLI:**
+```bash
+./bin/mcp-steer.mjs "Focus on testing the error handling paths"
+./bin/mcp-steer.mjs --session sess_abc123 "Try calling with invalid params"
+```
+
+**Using HTTP:**
+```bash
+curl -X POST http://127.0.0.1:9847/api/steer \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Check the authentication flow next"}'
+```
+
+**Using the MCP tool:**
+```json
+{
+  "tool": "insp_inject_steering",
+  "arguments": {
+    "session_id": "sess_abc123",
+    "message": "Great progress! Now test edge cases."
+  }
+}
+```
+
+### Event Types
+
+| Type | Description |
+|------|-------------|
+| `traffic_out` | Messages sent TO the target server |
+| `traffic_in` | Messages received FROM the target server |
+| `notification` | MCP notifications from the target server |
+| `error` | Errors encountered during communication |
+| `steering` | Human steering messages injected into the session |
+
+### Typical Workflow
+
+1. **LLM creates session:** `insp_connect` → gets `sess_abc123`
+2. **LLM starts testing:** `insp_tools_call` with `session_id`
+3. **Human observes:** `curl http://127.0.0.1:9847/api/sessions`
+4. **Human steers:** `./bin/mcp-steer.mjs "Also test the batch endpoint"`
+5. **LLM receives steering:** Next tool response includes `⚡ STEERING from human: ...`
+6. **LLM adapts:** Takes the human guidance into account
+
 ### Examples
 
 **List tools from a local MCP server (ephemeral):**
@@ -119,12 +205,15 @@ Sessions auto-close after 30 minutes of inactivity.
 ## Architecture
 
 ```
-src/
-├── server.ts     # MCP server exposing inspector tools
-├── client.ts     # Client wrapper (hybrid stateless/session mode)
-├── transport.ts  # Transport factory (stdio, SSE, HTTP)
-├── session.ts    # SessionRegistry with GC (30-min TTL)
-└── events.ts     # EventBuffer (ring buffer for notifications)
+├── src/
+│   ├── server.ts     # MCP server exposing inspector tools
+│   ├── client.ts     # Client wrapper (hybrid stateless/session mode)
+│   ├── transport.ts  # Transport factory (stdio, SSE, HTTP) + TracingWrapper
+│   ├── session.ts    # SessionRegistry with GC (30-min TTL)
+│   └── events.ts     # EventBuffer (ring buffer for notifications)
+├── bin/
+│   └── mcp-steer.mjs # CLI tool for human steering
+└── tests/            # Ad-hoc test scripts (run with npx tsx)
 ```
 
 ## Why This Exists
@@ -137,6 +226,12 @@ The original MCP Inspector is a web-based UI + CLI combo spread across multiple 
 4. Debug stateful behavior with persistent sessions
 
 ## Changelog
+
+### v2.1.0
+- Added human steering (`insp_inject_steering`) for human-in-the-loop workflows
+- Added HTTP API on port 9847 for external steering/observability
+- Added `mcp-steer.mjs` CLI tool for easy human interaction
+- Fixed critical bug in `TracingTransportWrapper` where handler capture timing caused message loss
 
 ### v2.0.0
 - Added session management (`insp_connect`, `insp_disconnect`, `insp_list_sessions`)

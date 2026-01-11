@@ -1,17 +1,24 @@
 {
   "name": "mcp-inspector-as-mcp-server",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "A lean MCP server that enables LLMs to inspect and test other MCP servers",
+  "author": "Eren Sinecan",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/esinecan/mcp-inspector-as-mcp-server"
+  },
   "type": "module",
   "main": "dist/server.js",
   "bin": {
-    "mcp-inspector": "dist/server.js"
+    "mcp-inspector": "dist/server.js",
+    "mcp-steer": "bin/mcp-steer.mjs"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc -w",
     "start": "node dist/server.js",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "echo 'No formal test suite yet - run npx tsx quick-test.ts for smoke test'"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.24.3"
@@ -28,7 +35,9 @@
     "model-context-protocol",
     "inspector",
     "testing",
-    "debugging"
+    "debugging",
+    "llm",
+    "ai-agents"
   ],
   "license": "MIT"
 }
