@@ -1,5 +1,9 @@
 # MCP Inspector as MCP Server
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
+
 A lean MCP server that enables LLMs to inspect and test other MCP servers. This is a self-contained implementation that uses the MCP SDK directly, without shelling out to external CLIs.
 
 ## Features
@@ -213,7 +217,8 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 │   └── events.ts     # EventBuffer (ring buffer for notifications)
 ├── bin/
 │   └── mcp-steer.mjs # CLI tool for human steering
-└── tests/            # Ad-hoc test scripts (run with npx tsx)
+├── tests/            # Integration test scripts (run with npx tsx)
+└── vitest.config.ts  # Unit test + coverage config
 ```
 
 ## Why This Exists
@@ -224,6 +229,19 @@ The original MCP Inspector is a web-based UI + CLI combo spread across multiple 
 2. Test MCP server functionality without leaving the conversation
 3. Explore what tools/resources/prompts an MCP server exposes
 4. Debug stateful behavior with persistent sessions
+
+## Development
+
+```bash
+npm install          # install dependencies
+npm run build        # compile TypeScript
+npm run dev          # watch mode
+npm test             # run unit tests
+npm run test:cov     # run tests with coverage
+npm run lint         # lint source files
+npm run format       # auto-format with Prettier
+npm run typecheck    # type-check without emitting
+```
 
 ## Changelog
 

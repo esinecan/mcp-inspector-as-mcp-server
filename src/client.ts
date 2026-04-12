@@ -43,7 +43,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 
 /**
  * Execute an operation against an MCP server
- * 
+ *
  * Hybrid mode:
  * - If sessionId is provided, uses persistent connection from registry
  * - If sessionId is omitted, uses ephemeral connection (original behavior)
@@ -51,13 +51,15 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 async function withConnection<T>(
   config: TransportConfig,
   operation: (client: Client, transport: Transport) => Promise<T>,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<T> {
   // Session mode: use persistent connection
   if (sessionId) {
     const session = sessionRegistry.get(sessionId);
     if (!session) {
-      throw new Error(`Session not found: ${sessionId}. Use insp_connect to create a session first.`);
+      throw new Error(
+        `Session not found: ${sessionId}. Use insp_connect to create a session first.`,
+      );
     }
 
     // Update last active timestamp
@@ -68,7 +70,7 @@ async function withConnection<T>(
 
   // Ephemeral mode: original stateless behavior
   const transport = createTransport(config);
-  const client = new Client({ name: "mcp-inspector", version: "1.0.0" });
+  const client = new Client({ name: "mcp-inspector", version: "2.1.0" });
 
   try {
     await client.connect(transport);
@@ -87,12 +89,16 @@ async function withConnection<T>(
  */
 export async function listTools(
   config: TransportConfig,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<{ tools: ToolInfo[] }> {
-  return withConnection(config, async (client) => {
-    const result = await client.listTools();
-    return { tools: result.tools as ToolInfo[] };
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.listTools();
+      return { tools: result.tools as ToolInfo[] };
+    },
+    sessionId,
+  );
 }
 
 /**
@@ -102,12 +108,16 @@ export async function callTool(
   config: TransportConfig,
   name: string,
   args: Record<string, JsonValue> = {},
-  sessionId?: string
+  sessionId?: string,
 ): Promise<unknown> {
-  return withConnection(config, async (client) => {
-    const result = await client.callTool({ name, arguments: args });
-    return result;
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.callTool({ name, arguments: args });
+      return result;
+    },
+    sessionId,
+  );
 }
 
 /**
@@ -115,12 +125,16 @@ export async function callTool(
  */
 export async function listResources(
   config: TransportConfig,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<{ resources: ResourceInfo[] }> {
-  return withConnection(config, async (client) => {
-    const result = await client.listResources();
-    return { resources: result.resources as ResourceInfo[] };
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.listResources();
+      return { resources: result.resources as ResourceInfo[] };
+    },
+    sessionId,
+  );
 }
 
 /**
@@ -129,12 +143,16 @@ export async function listResources(
 export async function readResource(
   config: TransportConfig,
   uri: string,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<unknown> {
-  return withConnection(config, async (client) => {
-    const result = await client.readResource({ uri });
-    return result;
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.readResource({ uri });
+      return result;
+    },
+    sessionId,
+  );
 }
 
 /**
@@ -142,12 +160,16 @@ export async function readResource(
  */
 export async function listResourceTemplates(
   config: TransportConfig,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<{ resourceTemplates: ResourceTemplate[] }> {
-  return withConnection(config, async (client) => {
-    const result = await client.listResourceTemplates();
-    return { resourceTemplates: result.resourceTemplates as ResourceTemplate[] };
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.listResourceTemplates();
+      return { resourceTemplates: result.resourceTemplates as ResourceTemplate[] };
+    },
+    sessionId,
+  );
 }
 
 /**
@@ -155,12 +177,16 @@ export async function listResourceTemplates(
  */
 export async function listPrompts(
   config: TransportConfig,
-  sessionId?: string
+  sessionId?: string,
 ): Promise<{ prompts: PromptInfo[] }> {
-  return withConnection(config, async (client) => {
-    const result = await client.listPrompts();
-    return { prompts: result.prompts as PromptInfo[] };
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.listPrompts();
+      return { prompts: result.prompts as PromptInfo[] };
+    },
+    sessionId,
+  );
 }
 
 /**
@@ -170,10 +196,14 @@ export async function getPrompt(
   config: TransportConfig,
   name: string,
   args: Record<string, string> = {},
-  sessionId?: string
+  sessionId?: string,
 ): Promise<unknown> {
-  return withConnection(config, async (client) => {
-    const result = await client.getPrompt({ name, arguments: args });
-    return result;
-  }, sessionId);
+  return withConnection(
+    config,
+    async (client) => {
+      const result = await client.getPrompt({ name, arguments: args });
+      return result;
+    },
+    sessionId,
+  );
 }

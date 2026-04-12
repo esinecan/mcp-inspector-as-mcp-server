@@ -3,7 +3,7 @@
 /**
  * MCP Inspector as MCP Server
  * A lean MCP server that enables LLMs to inspect and test other MCP servers
- * 
+ *
  * Supports both ephemeral (stateless) and persistent (session-based) connections
  */
 
@@ -54,7 +54,8 @@ const connectionProperties = {
   },
   session_id: {
     type: "string" as const,
-    description: "Optional. Use a persistent session instead of ephemeral connection. Create with insp_connect.",
+    description:
+      "Optional. Use a persistent session instead of ephemeral connection. Create with insp_connect.",
   },
 };
 
@@ -72,7 +73,8 @@ const TOOLS: Tool[] = [
   // ============================================
   {
     name: "insp_connect",
-    description: "Establish a persistent connection to an MCP server. Returns a session_id to use with other tools. The session will be automatically closed after 30 minutes of inactivity.",
+    description:
+      "Establish a persistent connection to an MCP server. Returns a session_id to use with other tools. The session will be automatically closed after 30 minutes of inactivity.",
     inputSchema: {
       type: "object",
       properties: {
@@ -103,7 +105,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_read_events",
-    description: "Read buffered events (notifications, traffic, errors) from a session. Events are stored in a ring buffer per session.",
+    description:
+      "Read buffered events (notifications, traffic, errors) from a session. Events are stored in a ring buffer per session.",
     inputSchema: {
       type: "object",
       properties: {
@@ -117,7 +120,10 @@ const TOOLS: Tool[] = [
         },
         types: {
           type: "array",
-          items: { type: "string", enum: ["notification", "traffic_in", "traffic_out", "error", "steering"] },
+          items: {
+            type: "string",
+            enum: ["notification", "traffic_in", "traffic_out", "error", "steering"],
+          },
           description: "Filter by event types. If omitted, returns all types.",
         },
         limit: {
@@ -130,7 +136,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_inject_steering",
-    description: "Inject a steering message into a session. The message will be appended to the next tool response for that session. Used by humans to provide guidance to the LLM.",
+    description:
+      "Inject a steering message into a session. The message will be appended to the next tool response for that session. Used by humans to provide guidance to the LLM.",
     inputSchema: {
       type: "object",
       properties: {
@@ -151,7 +158,8 @@ const TOOLS: Tool[] = [
   // ============================================
   {
     name: "insp_tools_list",
-    description: "List all tools exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "List all tools exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: connectionProperties,
@@ -159,7 +167,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_tools_call",
-    description: "Call a tool on an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "Call a tool on an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: {
@@ -178,7 +187,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_resources_list",
-    description: "List all resources exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "List all resources exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: connectionProperties,
@@ -186,7 +196,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_resources_read",
-    description: "Read a specific resource from an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "Read a specific resource from an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: {
@@ -201,7 +212,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_resources_templates",
-    description: "List resource templates exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "List resource templates exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: connectionProperties,
@@ -209,7 +221,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_prompts_list",
-    description: "List all prompts exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "List all prompts exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: connectionProperties,
@@ -217,7 +230,8 @@ const TOOLS: Tool[] = [
   },
   {
     name: "insp_prompts_get",
-    description: "Get a specific prompt from an MCP server. Uses ephemeral connection unless session_id is provided.",
+    description:
+      "Get a specific prompt from an MCP server. Uses ephemeral connection unless session_id is provided.",
     inputSchema: {
       type: "object",
       properties: {
@@ -252,10 +266,7 @@ function extractConfig(args: Record<string, unknown>): TransportConfig {
 /**
  * Handle tool calls
  */
-async function handleToolCall(
-  name: string,
-  args: Record<string, unknown>
-): Promise<unknown> {
+async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
   const config = extractConfig(args);
   const sessionId = args.session_id as string | undefined;
 
@@ -269,7 +280,8 @@ async function handleToolCall(
         session_id: result.sessionId,
         server_info: result.serverInfo,
         capabilities: result.capabilities,
-        message: "Session created. Use this session_id with other tools. Session will auto-close after 30 minutes of inactivity.",
+        message:
+          "Session created. Use this session_id with other tools. Session will auto-close after 30 minutes of inactivity.",
       };
     }
 
@@ -347,7 +359,12 @@ async function handleToolCall(
     case "insp_tools_call": {
       const toolName = args.tool_name as string;
       const toolArgs = (args.tool_args as Record<string, unknown>) || {};
-      return callTool(config, toolName, toolArgs as Record<string, string | number | boolean | null>, sessionId);
+      return callTool(
+        config,
+        toolName,
+        toolArgs as Record<string, string | number | boolean | null>,
+        sessionId,
+      );
     }
 
     case "insp_resources_list":
@@ -407,7 +424,9 @@ function startSteeringHttpServer(): void {
     // POST /api/steer - inject steering message
     if (req.method === "POST" && req.url === "/api/steer") {
       let body = "";
-      req.on("data", (chunk) => { body += chunk; });
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
       req.on("end", () => {
         try {
           const { session_id, message } = JSON.parse(body);
@@ -429,11 +448,13 @@ function startSteeringHttpServer(): void {
 
           sessionRegistry.injectSteering(targetSessionId, message);
           res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({
-            success: true,
-            session_id: targetSessionId,
-            message: "Steering message queued"
-          }));
+          res.end(
+            JSON.stringify({
+              success: true,
+              session_id: targetSessionId,
+              message: "Steering message queued",
+            }),
+          );
         } catch {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ error: "Invalid JSON body" }));
@@ -448,12 +469,16 @@ function startSteeringHttpServer(): void {
   });
 
   httpServer.listen(STEERING_HTTP_PORT, "127.0.0.1", () => {
-    console.error(`[mcp-inspector] Steering HTTP server running on http://127.0.0.1:${STEERING_HTTP_PORT}`);
+    console.error(
+      `[mcp-inspector] Steering HTTP server running on http://127.0.0.1:${STEERING_HTTP_PORT}`,
+    );
   });
 
   httpServer.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EADDRINUSE") {
-      console.error(`[mcp-inspector] Warning: Steering port ${STEERING_HTTP_PORT} in use, steering disabled`);
+      console.error(
+        `[mcp-inspector] Warning: Steering port ${STEERING_HTTP_PORT} in use, steering disabled`,
+      );
     } else {
       console.error(`[mcp-inspector] Steering server error:`, error.message);
     }
@@ -464,11 +489,11 @@ function startSteeringHttpServer(): void {
  * Main server entry point
  */
 async function main(): Promise<void> {
-  console.error("[mcp-inspector] Starting MCP Inspector server (v2.0 - with session management)...");
+  console.error("[mcp-inspector] Starting MCP Inspector server (v2.1.0)...");
 
   const server = new Server(
-    { name: "mcp-inspector", version: "2.0.0" },
-    { capabilities: { tools: {} } }
+    { name: "mcp-inspector", version: "2.1.0" },
+    { capabilities: { tools: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -484,7 +509,7 @@ async function main(): Promise<void> {
       const result = await handleToolCall(name, (args || {}) as Record<string, unknown>);
 
       const content: Array<{ type: string; text: string }> = [
-        { type: "text", text: JSON.stringify(result, null, 2) }
+        { type: "text", text: JSON.stringify(result, null, 2) },
       ];
 
       // Append steering messages if using a session (piggybacked delivery)
@@ -494,7 +519,7 @@ async function main(): Promise<void> {
         if (steeringMessages.length > 0) {
           content.push({
             type: "text",
-            text: `\n⚡ STEERING from human:\n${steeringMessages.join('\n')}`,
+            text: `\n⚡ STEERING from human:\n${steeringMessages.join("\n")}`,
           });
         }
       }
