@@ -7,7 +7,10 @@
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type {
+  Transport,
+  TransportSendOptions,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
 import type { EventBuffer } from "./events.js";
 
@@ -57,7 +60,7 @@ export function createTransport(config: TransportConfig): Transport {
     }
 
     const env: Record<string, string> = {
-      ...process.env as Record<string, string>,
+      ...(process.env as Record<string, string>),
       ...(config.env || {}),
     };
 
@@ -76,16 +79,12 @@ export function createTransport(config: TransportConfig): Transport {
   const url = new URL(config.url);
 
   if (transportType === "sse") {
-    const options = config.headers
-      ? { requestInit: { headers: config.headers } }
-      : undefined;
+    const options = config.headers ? { requestInit: { headers: config.headers } } : undefined;
     return new SSEClientTransport(url, options);
   }
 
   if (transportType === "http") {
-    const options = config.headers
-      ? { requestInit: { headers: config.headers } }
-      : undefined;
+    const options = config.headers ? { requestInit: { headers: config.headers } } : undefined;
     return new StreamableHTTPClientTransport(url, options);
   }
 
@@ -98,7 +97,7 @@ export function createTransport(config: TransportConfig): Transport {
  */
 export function createTracingTransport(
   config: TransportConfig,
-  eventBuffer: EventBuffer
+  eventBuffer: EventBuffer,
 ): Transport {
   const inner = createTransport(config);
   return new TracingTransportWrapper(inner, eventBuffer);
@@ -106,7 +105,7 @@ export function createTracingTransport(
 
 /**
  * Transport wrapper that intercepts send/receive and logs to EventBuffer
- * 
+ *
  * IMPORTANT: The MCP SDK sets `onmessage`/`onerror`/`onclose` handlers AFTER
  * calling `start()`. We use getters/setters to intercept these and wrap them
  * dynamically, ensuring our tracing logic runs alongside the SDK's handlers.
@@ -133,7 +132,7 @@ class TracingTransportWrapper implements Transport {
   async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
     // Log outgoing traffic
     this.eventBuffer.push({
-      type: 'traffic_out',
+      type: "traffic_out",
       data: {
         message,
         options,
@@ -156,9 +155,11 @@ class TracingTransportWrapper implements Transport {
   set onclose(handler: (() => void) | undefined) {
     this._onclose = handler;
     // Wrap and forward to inner transport
-    this.inner.onclose = handler ? () => {
-      handler();
-    } : undefined;
+    this.inner.onclose = handler
+      ? () => {
+          handler();
+        }
+      : undefined;
   }
 
   get onerror(): ((error: Error) => void) | undefined {
@@ -168,35 +169,43 @@ class TracingTransportWrapper implements Transport {
   set onerror(handler: ((error: Error) => void) | undefined) {
     this._onerror = handler;
     // Wrap with error logging and forward
-    this.inner.onerror = handler ? (error: Error) => {
-      this.eventBuffer.push({
-        type: 'error',
-        data: {
-          message: error.message,
-          stack: error.stack,
-        },
-      });
-      handler(error);
-    } : undefined;
+    this.inner.onerror = handler
+      ? (error: Error) => {
+          this.eventBuffer.push({
+            type: "error",
+            data: {
+              message: error.message,
+              stack: error.stack,
+            },
+          });
+          handler(error);
+        }
+      : undefined;
   }
 
-  get onmessage(): (<T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void) | undefined {
+  get onmessage():
+    | (<T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void)
+    | undefined {
     return this._onmessage;
   }
 
-  set onmessage(handler: (<T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void) | undefined) {
+  set onmessage(
+    handler: (<T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => void) | undefined,
+  ) {
     this._onmessage = handler;
     // Wrap with traffic logging and forward
-    this.inner.onmessage = handler ? <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => {
-      this.eventBuffer.push({
-        type: 'traffic_in',
-        data: {
-          message,
-          extra,
-        },
-      });
-      handler(message, extra);
-    } : undefined;
+    this.inner.onmessage = handler
+      ? <T extends JSONRPCMessage>(message: T, extra?: MessageExtraInfo) => {
+          this.eventBuffer.push({
+            type: "traffic_in",
+            data: {
+              message,
+              extra,
+            },
+          });
+          handler(message, extra);
+        }
+      : undefined;
   }
 
   // Passthrough properties
