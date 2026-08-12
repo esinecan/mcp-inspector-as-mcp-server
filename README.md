@@ -4,13 +4,14 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen.svg)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue.svg)](https://www.typescriptlang.org/)
 
-A lean MCP server that enables LLMs to inspect and test other MCP servers. This is a self-contained implementation that uses the MCP SDK directly, without shelling out to external CLIs.
+A lean MCP server that enables LLMs to inspect and test other MCP servers. This is a self-contained implementation built on the MCP SDK v2 packages directly, without shelling out to external CLIs.
 
 ## Features
 
-- **Direct SDK integration**: Uses `@modelcontextprotocol/sdk` directly for both server and client operations
+- **Direct SDK integration**: Built on the MCP SDK v2 packages, `@modelcontextprotocol/server` for serving the inspector tools and `@modelcontextprotocol/client` for connecting to target servers
 - **All transport types**: Supports stdio, SSE, and HTTP (streamable) transports
-- **Minimal footprint**: Single dependency (`@modelcontextprotocol/sdk`)
+- **Small footprint**: Two runtime dependencies, the `@modelcontextprotocol` v2 client and server packages
+- **Protocol-era aware client**: When connecting to a target server, can negotiate the legacy 2025-era handshake or the modern stateless protocol and report which era the server actually answered as (see [Protocol negotiation](#protocol-negotiation))
 - **Full MCP inspection**: List tools, call tools, list resources, read resources, list prompts, get prompts
 - **Session management**: Persistent connections with automatic garbage collection
 - **Event buffering**: Capture notifications, traffic, and errors for debugging
@@ -77,7 +78,22 @@ All tools accept the following connection parameters:
 
 **Common:**
 - `transport`: Force transport type (`"stdio"`, `"sse"`, or `"http"`). Auto-detected if not specified.
+- `negotiation`: Protocol era to negotiate as a client (`"legacy"`, `"auto"`, or a pinned revision). See [Protocol negotiation](#protocol-negotiation).
 - `session_id`: (Optional) Use an existing persistent session instead of creating an ephemeral connection.
+
+### Protocol negotiation
+
+When the inspector connects to a target server as a client, it speaks the MCP protocol. The protocol has two eras: the legacy 2025-era `initialize` handshake, and the newer modern (stateless) revision (`2026-07-28` and later). The `negotiation` parameter controls which era the inspector asks for:
+
+- `"legacy"` (default): the SDK default. Perform the traditional `initialize` handshake. Maximum compatibility; works with every server.
+- `"auto"`: probe the server to find out whether it speaks the modern stateless protocol, falling back to legacy. Use this to verify that a server actually serves modern clients.
+- a pinned revision string (e.g. `"2026-07-28"`): request a specific protocol revision.
+
+Why this matters: a server that supports both eras will always answer as legacy when the client does not ask for anything else. Without `negotiation: "auto"` (or a pinned modern revision) you cannot tell, from a successful connection, whether a target server really supports the modern protocol. It simply negotiated down to legacy. This is the single most useful signal the inspector can return about a server during the SDK migration.
+
+`insp_connect` and `insp_list_sessions` report the outcome per session. In the `insp_connect` response look for `protocol_version` (the negotiated MCP revision, e.g. `2025-11-25` or `2026-07-28`) and `era` (`legacy` or `modern`); `insp_list_sessions` carries the same two values on each session in its listing.
+
+> Note on the inspector itself. The inspector is a tier-1 server: ported to the v2 SDK packages, it serves clients of both protocol eras, but it is not discoverable as a modern server. It does not implement `server/discover` (the call returns `-32601 method not found`) or `subscriptions/listen`. The `negotiation` parameter only governs how the inspector behaves as a client toward other servers.
 
 ### Session Workflow
 
@@ -244,6 +260,10 @@ npm run typecheck    # type-check without emitting
 ```
 
 ## Changelog
+
+### Unreleased
+- Added the `negotiation` connection parameter for client-side protocol-era negotiation (`legacy` / `auto` / pinned revision)
+- `insp_connect` and `insp_list_sessions` now report the negotiated protocol revision and era of each session
 
 ### v2.1.0
 - Added human steering (`insp_inject_steering`) for human-in-the-loop workflows
