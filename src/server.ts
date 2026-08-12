@@ -407,7 +407,10 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
 
 import { createServer } from "http";
 
-const STEERING_HTTP_PORT = 9847;
+// Overridable so co-resident deployments don't fight over the port — the
+// second instance to bind would otherwise silently lose steering (EADDRINUSE
+// is only a stderr warning).
+const STEERING_HTTP_PORT = Number(process.env.INSPECTOR_STEERING_PORT ?? 9847);
 
 /**
  * Start HTTP server for external steering access
