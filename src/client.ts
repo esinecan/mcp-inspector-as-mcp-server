@@ -3,9 +3,9 @@
  * Supports both ephemeral (stateless) and persistent (session-based) connections
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { createTransport, TransportConfig } from "./transport.js";
+import { Client } from "@modelcontextprotocol/client";
+import type { Transport } from "@modelcontextprotocol/client";
+import { createTransport, TransportConfig, versionNegotiationFor } from "./transport.js";
 import { sessionRegistry } from "./session.js";
 
 // Result types matching MCP protocol
@@ -70,7 +70,10 @@ async function withConnection<T>(
 
   // Ephemeral mode: original stateless behavior
   const transport = createTransport(config);
-  const client = new Client({ name: "mcp-inspector", version: "2.1.0" });
+  const client = new Client(
+    { name: "mcp-inspector", version: "2.1.0" },
+    { versionNegotiation: versionNegotiationFor(config) },
+  );
 
   try {
     await client.connect(transport);
@@ -109,11 +112,15 @@ export async function callTool(
   name: string,
   args: Record<string, JsonValue> = {},
   sessionId?: string,
+  timeoutMs?: number,
 ): Promise<unknown> {
   return withConnection(
     config,
     async (client) => {
-      const result = await client.callTool({ name, arguments: args });
+      // v2: callTool takes (params, options). The v1 middle `resultSchema`
+      // argument was removed, so the old 3-arg form no longer type-checks.
+      const options = timeoutMs !== undefined ? { timeout: timeoutMs } : undefined;
+      const result = await client.callTool({ name, arguments: args }, options);
       return result;
     },
     sessionId,

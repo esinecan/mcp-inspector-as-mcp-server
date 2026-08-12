@@ -3,11 +3,24 @@
  * Handles connection pooling, lifecycle, and garbage collection
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { createTracingTransport, TransportConfig } from "./transport.js";
+import { Client } from "@modelcontextprotocol/client";
+import type { Transport } from "@modelcontextprotocol/client";
+import { createTracingTransport, TransportConfig, versionNegotiationFor } from "./transport.js";
 import { EventBuffer } from "./events.js";
 import { randomBytes } from "crypto";
+
+/** Protocol era, mirroring the SDK's own `ProtocolEra` union. */
+export type ProtocolEra = "legacy" | "modern";
+
+/**
+ * Map a negotiated protocol revision onto its era. Revisions are ISO-ish date
+ * strings, so lexicographic comparison is ordering-correct. `2026-07-28` is the
+ * first modern (stateless) revision.
+ */
+export function protocolEraOf(version: string | undefined): ProtocolEra | undefined {
+  if (!version) return undefined;
+  return version >= "2026-07-28" ? "modern" : "legacy";
+}
 
 export interface SessionContext {
   id: string;
@@ -22,6 +35,10 @@ export interface SessionContext {
     name?: string;
     version?: string;
   };
+  /** Negotiated MCP protocol revision, e.g. "2025-11-25" or "2026-07-28". */
+  protocolVersion?: string;
+  /** Which protocol era that revision belongs to. */
+  era?: ProtocolEra;
   capabilities?: Record<string, unknown>;
 }
 
@@ -35,6 +52,10 @@ export interface SessionInfo {
     name?: string;
     version?: string;
   };
+  /** Negotiated MCP protocol revision, e.g. "2025-11-25" or "2026-07-28". */
+  protocolVersion?: string;
+  /** Which protocol era that revision belongs to. */
+  era?: ProtocolEra;
 }
 
 export interface ConnectResult {
@@ -43,6 +64,10 @@ export interface ConnectResult {
     name?: string;
     version?: string;
   };
+  /** Negotiated MCP protocol revision, e.g. "2025-11-25" or "2026-07-28". */
+  protocolVersion?: string;
+  /** Which protocol era that revision belongs to. */
+  era?: ProtocolEra;
   capabilities?: Record<string, unknown>;
 }
 
@@ -158,7 +183,10 @@ class SessionRegistry {
     const transport = createTracingTransport(config, eventBuffer);
 
     // Create client
-    const client = new Client({ name: "mcp-inspector", version: "2.1.0" });
+    const client = new Client(
+      { name: "mcp-inspector", version: "2.1.0" },
+      { versionNegotiation: versionNegotiationFor(config) },
+    );
 
     // Set fallback notification handler to capture all notifications
     client.fallbackNotificationHandler = async (notification) => {
@@ -173,6 +201,11 @@ class SessionRegistry {
     // Get server info from the connection
     const serverInfo = client.getServerVersion();
     const capabilities = client.getServerCapabilities();
+    // Which protocol revision did we actually land on? During the fleet
+    // migration this is the single most useful thing the inspector can tell
+    // you: whether a given server answered as legacy or modern.
+    const protocolVersion = client.getNegotiatedProtocolVersion();
+    const era = protocolEraOf(protocolVersion);
 
     const session: SessionContext = {
       id,
@@ -190,6 +223,8 @@ class SessionRegistry {
           }
         : undefined,
       capabilities: capabilities as Record<string, unknown> | undefined,
+      protocolVersion,
+      era,
     };
 
     this.sessions.set(id, session);
@@ -198,6 +233,8 @@ class SessionRegistry {
       sessionId: id,
       serverInfo: session.serverInfo,
       capabilities: session.capabilities,
+      protocolVersion: session.protocolVersion,
+      era: session.era,
     };
   }
 
@@ -248,6 +285,8 @@ class SessionRegistry {
       lastActive: session.lastActive,
       idleSeconds: Math.floor((now - session.lastActive) / 1000),
       serverInfo: session.serverInfo,
+      protocolVersion: session.protocolVersion,
+      era: session.era,
     }));
   }
 

@@ -4,14 +4,17 @@
  * Includes optional tracing wrapper for traffic logging
  */
 
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  SSEClientTransport,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import type {
   Transport,
   TransportSendOptions,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage, MessageExtraInfo } from "@modelcontextprotocol/sdk/types.js";
+  JSONRPCMessage,
+  MessageExtraInfo,
+} from "@modelcontextprotocol/client";
 import type { EventBuffer } from "./events.js";
 
 export type TransportType = "stdio" | "sse" | "http";
@@ -26,6 +29,35 @@ export interface TransportConfig {
   headers?: Record<string, string>;
   // Transport type (auto-detected if not specified)
   transport?: TransportType;
+  /**
+   * Which protocol era to negotiate as a client.
+   *
+   * The SDK's own default is "legacy", so without this the inspector always
+   * opens with the 2025-era `initialize` handshake and a dual-era server will
+   * answer as legacy — which makes it impossible to prove that a ported server
+   * actually serves modern clients. "auto" probes for the modern stateless
+   * era; a bare revision string pins one exactly (e.g. "2026-07-28").
+   */
+  negotiation?: NegotiationMode;
+}
+
+/** "legacy" | "auto" | a pinned protocol revision such as "2026-07-28". */
+export type NegotiationMode = "legacy" | "auto" | (string & {});
+
+/**
+ * Build the `ClientOptions.versionNegotiation` value for a config. Returns
+ * undefined when unset so the SDK default ("legacy") applies unchanged.
+ */
+export function versionNegotiationFor(
+  config: TransportConfig,
+): { mode: "legacy" | "auto" | { pin: string } } | undefined {
+  const n = config.negotiation;
+  if (!n) return undefined;
+  // Checked separately rather than as one `||`: the `string & {}` member of
+  // NegotiationMode defeats narrowing on a combined test.
+  if (n === "legacy") return { mode: "legacy" };
+  if (n === "auto") return { mode: "auto" };
+  return { mode: { pin: n } };
 }
 
 /**

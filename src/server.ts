@@ -7,13 +7,8 @@
  * Supports both ephemeral (stateless) and persistent (session-based) connections
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-  Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server, Tool } from "@modelcontextprotocol/server";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import {
   listTools,
   callTool,
@@ -23,7 +18,7 @@ import {
   listPrompts,
   getPrompt,
 } from "./client.js";
-import { TransportConfig, TransportType } from "./transport.js";
+import { TransportConfig, TransportType, NegotiationMode } from "./transport.js";
 import { sessionRegistry } from "./session.js";
 import type { EventType } from "./events.js";
 
@@ -44,8 +39,16 @@ const connectionProperties = {
   },
   transport: {
     type: "string" as const,
-    enum: ["stdio", "sse", "http"] as const,
+    // NB: no `as const` here. v2's `Tool.inputSchema` types property values as
+    // mutable JSON, so a `readonly` tuple is not assignable to its index
+    // signature. `type` above still needs `as const` for literal inference.
+    enum: ["stdio", "sse", "http"],
     description: "Transport type (auto-detected if not specified)",
+  },
+  negotiation: {
+    type: "string" as const,
+    description:
+      "Protocol era to negotiate as a client. 'legacy' (the SDK default: the 2025-era initialize handshake), 'auto' (probe for the modern stateless era), or a pinned revision such as '2026-07-28'. Use 'auto' to verify that a server actually serves modern clients — without it a dual-era server will always answer as legacy.",
   },
   headers: {
     type: "object" as const,
@@ -82,6 +85,7 @@ const TOOLS: Tool[] = [
         args: connectionProperties.args,
         url: connectionProperties.url,
         transport: connectionProperties.transport,
+        negotiation: connectionProperties.negotiation,
         headers: connectionProperties.headers,
       },
     },
@@ -181,6 +185,10 @@ const TOOLS: Tool[] = [
           type: "object",
           description: "Arguments to pass to the tool (key=value pairs)",
         },
+        timeout_ms: {
+          type: "number",
+          description: "Request timeout in milliseconds (default: 60000). Use 180000+ for slow tools like NotebookLM.",
+        },
       },
       required: ["tool_name"],
     },
@@ -259,6 +267,7 @@ function extractConfig(args: Record<string, unknown>): TransportConfig {
     args: args.args as string[] | undefined,
     url: args.url as string | undefined,
     transport: args.transport as TransportType | undefined,
+    negotiation: args.negotiation as NegotiationMode | undefined,
     headers: args.headers as Record<string, string> | undefined,
   };
 }
@@ -280,6 +289,8 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         session_id: result.sessionId,
         server_info: result.serverInfo,
         capabilities: result.capabilities,
+        protocol_version: result.protocolVersion,
+        era: result.era,
         message:
           "Session created. Use this session_id with other tools. Session will auto-close after 30 minutes of inactivity.",
       };
@@ -359,11 +370,13 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     case "insp_tools_call": {
       const toolName = args.tool_name as string;
       const toolArgs = (args.tool_args as Record<string, unknown>) || {};
+      const timeoutMs = args.timeout_ms as number | undefined;
       return callTool(
         config,
         toolName,
         toolArgs as Record<string, string | number | boolean | null>,
         sessionId,
+        timeoutMs,
       );
     }
 
@@ -496,11 +509,13 @@ async function main(): Promise<void> {
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  // v2: the low-level `Server` registers spec handlers by method string.
+  // The v1 zod request-schema objects (ListToolsRequestSchema etc.) are gone.
+  server.setRequestHandler("tools/list", async () => ({
     tools: TOOLS,
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler("tools/call", async (request) => {
     const { name, arguments: args } = request.params;
     const sessionId = (args as Record<string, unknown>)?.session_id as string | undefined;
     console.error(`[mcp-inspector] Tool called: ${name}`);
@@ -508,7 +523,9 @@ async function main(): Promise<void> {
     try {
       const result = await handleToolCall(name, (args || {}) as Record<string, unknown>);
 
-      const content: Array<{ type: string; text: string }> = [
+      // v2 types CallToolResult.content as a discriminated union, so `type`
+      // must stay the literal "text" rather than widening to `string`.
+      const content: Array<{ type: "text"; text: string }> = [
         { type: "text", text: JSON.stringify(result, null, 2) },
       ];
 
