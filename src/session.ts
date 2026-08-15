@@ -86,8 +86,10 @@ function generateSessionId(): string {
 /**
  * Singleton session registry
  * Manages persistent MCP connections with automatic garbage collection
+ *
+ * Exported for tests; runtime code should use the `sessionRegistry` singleton.
  */
-class SessionRegistry {
+export class SessionRegistry {
   private sessions: Map<string, SessionContext> = new Map();
   private gcInterval: NodeJS.Timeout | null = null;
   private isShuttingDown = false;

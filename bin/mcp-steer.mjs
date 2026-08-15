@@ -9,7 +9,9 @@
  *   mcp-steer --list
  */
 
-const STEERING_URL = "http://127.0.0.1:9847";
+// Mirrors the server-side override so a co-resident deployment on a shifted
+// port stays reachable from the CLI.
+const STEERING_URL = `http://127.0.0.1:${process.env.INSPECTOR_STEERING_PORT ?? 9847}`;
 
 async function main() {
   const args = process.argv.slice(2);
