@@ -506,6 +506,10 @@ narrowing is the profile blocklist, which applies when the tool is reached
 through `mcp-cli call`, so `--profile nobridge` with `"block": ["bridge.*"]`
 exits 3.
 
+A command that fails is still HTTP 200 with its code in `exit`. A body that is
+not JSON answers 400, a body that is JSON but not a valid request answers 500,
+and either way the server keeps serving. Requests run concurrently.
+
 Full detail, including the config table and the module layout, is in
 [docs/host-bridge.md](docs/host-bridge.md).
 

@@ -116,6 +116,19 @@ The request body is `{cmd, cwd?, stdin?, timeout?}` and the response is
 `{exit, stdout, stderr}`. Any other path or method answers 404. The wire format
 is the one the Python bridge served, so an existing client needs no change.
 
+A command that fails is still a 200: its exit code is in `exit`. The other
+statuses mean the request never became a process, and each one carries a JSON
+body of `{"error": "..."}`:
+
+| Status | Cause |
+| --- | --- |
+| 400 | the body is not JSON |
+| 413 | the body is over 4 MB, or the client disconnected part way through |
+| 500 | the body is JSON but not a valid request, or the shell would not start |
+
+The server answers all of these and keeps serving. Requests are handled
+concurrently, so one slow command does not hold up the next.
+
 ## Registering the MCP adapter
 
 `bridge mcp` is a stdio MCP server with one tool, `host_exec`. Its input is
@@ -165,8 +178,11 @@ does not pass through that blocklist.
 
 `src/bridge/` holds the core and both adapters:
 
-- `path-map.ts`: the three rewrites and the two guarded regular expressions.
-- `exec.ts`: `execBridged`, the timeout, and the process-tree kill.
+- `path-map.ts`: the three rewrites and the two guarded regular expressions. It
+  spawns nothing and reads no configuration, so a test builds one from two
+  strings.
+- `exec.ts`: `execBridged`, the request checking, the timeout, and the
+  process-tree kill.
 - `selftest.ts`: the six cases.
 - `http.ts`: `POST /exec`.
 - `mcp-server.ts`: the `host_exec` tool over stdio.
@@ -174,3 +190,20 @@ does not pass through that blocklist.
 `src/cli/bridge.ts` holds the four subcommand bodies. The HTTP adapter and the
 MCP adapter are peers: both call `execBridged` directly, so the two surfaces
 cannot drift apart.
+
+`execBridged` takes an unchecked value and checks every field itself, because
+both adapters hand it something read off a wire. `cmd`, `cwd` and `stdin` must
+be strings; a `timeout` that is not a positive number means the default applies.
+It never throws, so a bad request is a rejected promise and cannot end the HTTP
+server. `bridgeErrorMessage` turns such a failure into the one sentence both
+adapters report.
+
+On a timeout the child is killed by process tree. On Windows that is
+`taskkill /pid N /T /F`, because ending the cmd.exe that `spawn` starts would
+leave the program it launched running. On other platforms the child is spawned
+detached, which makes it a process-group leader, and the group is killed by
+negative pid. The bridge serves a Windows host, so the Windows branch is the
+tested one.
+
+`docs/host-bridge-architecture-pass.md` records the design decisions behind this
+layout.
