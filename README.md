@@ -469,7 +469,14 @@ the current module layout is in
 │   ├── transport.ts  # Transport factory (stdio, SSE, HTTP) + TracingWrapper
 │   ├── session.ts    # SessionRegistry with GC (30-min TTL)
 │   ├── events.ts     # EventBuffer (ring buffer for notifications)
-│   └── cli/          # mcp-cli: config, profiles, connection seam, commands
+│   └── cli/          # mcp-cli
+│       ├── index.ts          # command bodies
+│       ├── fleet.ts          # servers + profile; answers without connecting
+│       ├── server-session.ts # the seam: SessionProvider, ServerSession
+│       ├── output.ts         # text or JSON, one place that writes
+│       ├── errors.ts         # each failure carries its exit code
+│       ├── config.ts         # config file shape, ${ENV}, glob, profiles
+│       ├── args.ts, input.ts, match.ts, import.ts
 ├── bin/
 │   └── mcp-steer.mjs # CLI tool for human steering
 ├── tests/            # Integration test scripts (run with npx tsx)
