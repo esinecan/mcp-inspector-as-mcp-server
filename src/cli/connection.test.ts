@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { Connector, ServerError, transportOf, withTimeout } from "./connection.js";
+import { Connector, transportOf, withTimeout } from "./connection.js";
+import { UnknownServerError } from "./args.js";
 
 describe("transportOf", () => {
   it("calls an entry with a command stdio", () => {
@@ -24,7 +25,7 @@ describe("Connector.entry", () => {
   });
 
   it("lists the configured names when asked for an unknown one", () => {
-    expect(() => connector.entry("nope")).toThrow(ServerError);
+    expect(() => connector.entry("nope")).toThrow(UnknownServerError);
     expect(() => connector.entry("nope")).toThrow(/Configured servers: forum/);
   });
 });

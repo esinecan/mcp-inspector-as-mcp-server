@@ -14,7 +14,7 @@ import { homedir } from "os";
 import { join } from "path";
 import type { Client } from "@modelcontextprotocol/client";
 
-import { parseArgs, UsageError, type ParsedArgs } from "./args.js";
+import { parseArgs, UnknownServerError, UsageError, type ParsedArgs } from "./args.js";
 import {
   ConfigError,
   configPath,
@@ -272,9 +272,8 @@ function resolveServerName(ctx: Context, query: string): string {
   if (names.includes(query)) return query;
   const hits = names.filter((n) => n.toLowerCase() === query.toLowerCase());
   if (hits.length === 1) return hits[0];
-  throw new ServerError(
+  throw new UnknownServerError(
     `Unknown server "${query}". Configured servers: ${names.sort().join(", ") || "(none)"}`,
-    query,
   );
 }
 
@@ -351,12 +350,18 @@ async function cmdResources(args: ParsedArgs): Promise<number> {
   const serverName = resolveServerName(ctx, target);
 
   const resources = await ctx.connector.with(serverName, async (client: Client) => {
+    if (!client.getServerCapabilities()?.resources) return null;
     const result = await client.listResources(undefined, ctx.connector.requestOptions);
     return result.resources;
   });
 
-  emit(ctx.json, { server: serverName, resources }, () =>
-    resources.length === 0
+  if (resources === null) {
+    process.stderr.write(`mcp-cli: ${serverName} advertises no resources capability
+`);
+  }
+
+  emit(ctx.json, { server: serverName, resources: resources ?? [] }, () =>
+    resources === null || resources.length === 0
       ? "(no resources)"
       : resources.map((r) => `${r.uri}  ${r.name ?? ""}`.trimEnd()).join("\n"),
   );
@@ -388,12 +393,18 @@ async function cmdPrompts(args: ParsedArgs): Promise<number> {
   const serverName = resolveServerName(ctx, target);
 
   const prompts = await ctx.connector.with(serverName, async (client) => {
+    if (!client.getServerCapabilities()?.prompts) return null;
     const result = await client.listPrompts(undefined, ctx.connector.requestOptions);
     return result.prompts;
   });
 
-  emit(ctx.json, { server: serverName, prompts }, () =>
-    prompts.length === 0
+  if (prompts === null) {
+    process.stderr.write(`mcp-cli: ${serverName} advertises no prompts capability
+`);
+  }
+
+  emit(ctx.json, { server: serverName, prompts: prompts ?? [] }, () =>
+    prompts === null || prompts.length === 0
       ? "(no prompts)"
       : prompts
           .map((p) =>

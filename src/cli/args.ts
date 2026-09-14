@@ -21,6 +21,9 @@ export interface ParsedArgs {
 
 export class UsageError extends Error {}
 
+/** A name the config file does not hold. A usage error, not a server failure. */
+export class UnknownServerError extends UsageError {}
+
 const VALUE_FLAGS = new Set(["--config", "--profile", "--timeout", "--from", "--out"]);
 
 export function parseArgs(argv: string[]): ParsedArgs {

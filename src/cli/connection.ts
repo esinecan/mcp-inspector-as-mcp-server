@@ -11,6 +11,7 @@ import type { Readable } from "stream";
 import { createTransport, versionNegotiationFor, type TransportConfig } from "../transport.js";
 import { protocolEraOf, type ProtocolEra } from "../session.js";
 import { resolveServerEntry, type CliConfig, type ServerEntry } from "./config.js";
+import { UnknownServerError } from "./args.js";
 
 export const CLIENT_NAME = "mcp-cli";
 export const CLIENT_VERSION = "2.1.0";
@@ -61,9 +62,8 @@ export class Connector {
     const entry = this.config.mcpServers[serverName];
     if (!entry) {
       const known = Object.keys(this.config.mcpServers).sort().join(", ");
-      throw new ServerError(
+      throw new UnknownServerError(
         `Unknown server "${serverName}". Configured servers: ${known || "(none)"}`,
-        serverName,
       );
     }
     return entry;
