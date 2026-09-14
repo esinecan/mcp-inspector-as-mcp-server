@@ -19,11 +19,32 @@ export interface ParsedArgs {
   /** `--from` and `--out`, used by import-claude. */
   from?: string;
   out?: string;
+  /** `--port`, `--bind`, `--cwd` and `--stdin`, used by the bridge commands. */
+  port?: number;
+  bind?: string;
+  cwd?: string;
+  stdin?: string;
+  /**
+   * The raw text of `--timeout`. `timeoutMs` is the MCP request budget in
+   * milliseconds; `bridge exec` reads the same flag as seconds, and keeping the
+   * text lets each command apply its own unit without a second flag name.
+   */
+  timeoutRaw?: string;
 }
 
 export { UsageError, UnknownServerError } from "./errors.js";
 
-const VALUE_FLAGS = new Set(["--config", "--profile", "--timeout", "--from", "--out"]);
+const VALUE_FLAGS = new Set([
+  "--config",
+  "--profile",
+  "--timeout",
+  "--from",
+  "--out",
+  "--port",
+  "--bind",
+  "--cwd",
+  "--stdin",
+]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const parsed: ParsedArgs = {
@@ -105,12 +126,30 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
     case "--out":
       parsed.out = value;
       return;
+    case "--bind":
+      parsed.bind = value;
+      return;
+    case "--cwd":
+      parsed.cwd = value;
+      return;
+    case "--stdin":
+      parsed.stdin = value;
+      return;
+    case "--port": {
+      const port = Number(value);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new UsageError(`--port needs a TCP port number, got "${value}"`);
+      }
+      parsed.port = port;
+      return;
+    }
     case "--timeout": {
       const ms = Number(value);
       if (!Number.isFinite(ms) || ms <= 0) {
         throw new UsageError(`--timeout needs a positive number of milliseconds, got "${value}"`);
       }
       parsed.timeoutMs = ms;
+      parsed.timeoutRaw = value;
       return;
     }
   }

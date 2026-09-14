@@ -9,7 +9,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
-import { join, isAbsolute, resolve } from "path";
+import { join, isAbsolute, resolve, win32 } from "path";
 import type { NegotiationMode, TransportType } from "../transport.js";
 import { ConfigError } from "./errors.js";
 
@@ -33,10 +33,43 @@ export interface ProfileEntry {
   block?: string[];
 }
 
+/**
+ * The `bridge` block. Every key is optional and falls back to the default
+ * below, so a config file that has never heard of the bridge still works.
+ */
+export interface BridgeEntry {
+  containerRoot?: string;
+  hostRoot?: string;
+  port?: number;
+  bind?: string;
+  defaultTimeout?: number;
+  maxTimeout?: number;
+}
+
+/** A bridge block with every default filled in. */
+export interface BridgeSettings {
+  containerRoot: string;
+  hostRoot: string;
+  port: number;
+  bind: string;
+  defaultTimeout: number;
+  maxTimeout: number;
+}
+
 export interface CliConfig {
   mcpServers: Record<string, ServerEntry>;
   profiles?: Record<string, ProfileEntry>;
+  bridge?: BridgeEntry;
 }
+
+export const DEFAULT_BRIDGE: BridgeSettings = {
+  containerRoot: "/workspace",
+  hostRoot: win32.join(homedir(), "agent-workspace"),
+  port: 8790,
+  bind: "0.0.0.0",
+  defaultTimeout: 600,
+  maxTimeout: 3600,
+};
 
 /** A profile after its `extends` chain is flattened. */
 export interface ResolvedProfile {
@@ -95,7 +128,62 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
     }
   }
 
-  return { mcpServers, profiles: (profiles ?? {}) as Record<string, ProfileEntry> };
+  const bridge = parseBridgeEntry(obj.bridge, source);
+
+  const config: CliConfig = {
+    mcpServers,
+    profiles: (profiles ?? {}) as Record<string, ProfileEntry>,
+  };
+  if (bridge) config.bridge = bridge;
+  return config;
+}
+
+/** Validate the `bridge` block. The roots are checked here so a bad path is a
+ * config error at load time rather than a confusing failure at exec time. */
+function parseBridgeEntry(raw: unknown, source: string): BridgeEntry | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`${source}: "bridge" must be an object`);
+  }
+  const entry = raw as Record<string, unknown>;
+  const out: BridgeEntry = {};
+
+  if (entry.containerRoot !== undefined) {
+    if (typeof entry.containerRoot !== "string" || !entry.containerRoot.startsWith("/")) {
+      throw new ConfigError(
+        `${source}: "bridge.containerRoot" must be an absolute POSIX path, such as "/workspace"`,
+      );
+    }
+    out.containerRoot = entry.containerRoot.replace(/\/+$/, "");
+  }
+  if (entry.hostRoot !== undefined) {
+    if (typeof entry.hostRoot !== "string" || !win32.isAbsolute(entry.hostRoot)) {
+      throw new ConfigError(
+        `${source}: "bridge.hostRoot" must be an absolute Windows path, such as "C:\\Users\\you\\agent-workspace"`,
+      );
+    }
+    out.hostRoot = entry.hostRoot.replace(/[\\/]+$/, "");
+  }
+  for (const key of ["port", "defaultTimeout", "maxTimeout"] as const) {
+    const value = entry[key];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new ConfigError(`${source}: "bridge.${key}" must be a positive number`);
+    }
+    out[key] = value;
+  }
+  if (entry.bind !== undefined) {
+    if (typeof entry.bind !== "string" || entry.bind.length === 0) {
+      throw new ConfigError(`${source}: "bridge.bind" must be a non-empty string`);
+    }
+    out.bind = entry.bind;
+  }
+  return out;
+}
+
+/** The bridge block of a config, with defaults filled in. */
+export function bridgeSettings(config: CliConfig | undefined): BridgeSettings {
+  return { ...DEFAULT_BRIDGE, ...(config?.bridge ?? {}) };
 }
 
 /** Read the config file from disk. */

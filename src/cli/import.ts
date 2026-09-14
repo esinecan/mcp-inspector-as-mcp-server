@@ -82,19 +82,23 @@ export function readClaudeServers(path: string): Record<string, ClaudeEntry> {
 }
 
 /**
- * Merge imported servers into an existing config, keeping its profiles. The
- * server list is replaced rather than merged, so a server removed from Claude
- * Code disappears here too.
+ * Merge imported servers into an existing config, keeping its profiles and its
+ * bridge block. The server list is replaced rather than merged, so a server
+ * removed from Claude Code disappears here too.
  */
 export function mergeIntoConfig(
   existing: CliConfig | undefined,
   servers: Record<string, ServerEntry>,
 ): CliConfig {
-  return {
+  const merged: CliConfig = {
     mcpServers: servers,
     profiles:
       existing?.profiles && Object.keys(existing.profiles).length > 0
         ? existing.profiles
         : { default: { block: [] } },
   };
+  // The bridge block is hand written and Claude Code knows nothing about it, so
+  // an import must leave it exactly as it found it.
+  if (existing?.bridge) merged.bridge = existing.bridge;
+  return merged;
 }

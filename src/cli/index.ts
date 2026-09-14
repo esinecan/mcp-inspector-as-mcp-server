@@ -32,6 +32,7 @@ import { resolveAddress, splitAddress } from "./match.js";
 import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
 import { Output, columnWidth, firstLine, oneLine, renderContent } from "./output.js";
+import { cmdBridge } from "./bridge.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -48,6 +49,7 @@ Usage:
   mcp-cli prompts <server>                 list prompts
   mcp-cli prompt <server.name> [args]      get one prompt
   mcp-cli import-claude                    build the config from ~/.claude.json
+  mcp-cli bridge <serve|mcp|selftest|exec> run host commands over the path contract
 
 Arguments for call and prompt are JSON, given as inline text, as "-" to read
 stdin, or as "@path" to read a file.
@@ -58,6 +60,8 @@ Global flags:
   --json            one JSON object on stdout instead of text
   --timeout <ms>    budget for connecting and for each request
   --all             with "tools", also show blocked tools, marked
+  --port, --bind    with "bridge serve", the listening socket
+  --cwd, --stdin    with "bridge exec", the working directory and standard input
   --help, --version
 
 Exit codes: 0 success, 1 failure, 2 usage error, 3 tool blocked by the profile.`;
@@ -87,6 +91,8 @@ export async function main(argv: string[]): Promise<number> {
 
   try {
     switch (args.command) {
+      case "bridge":
+        return await cmdBridge(args);
       case "import-claude":
         return cmdImportClaude(args);
       case "servers":
