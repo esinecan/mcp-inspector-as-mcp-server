@@ -5,10 +5,7 @@
  */
 
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import {
-  SSEClientTransport,
-  StreamableHTTPClientTransport,
-} from "@modelcontextprotocol/client";
+import { SSEClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type {
   Transport,
   TransportSendOptions,

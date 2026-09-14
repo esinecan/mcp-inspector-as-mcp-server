@@ -193,7 +193,8 @@ const TOOLS: Tool[] = [
         },
         timeout_ms: {
           type: "number",
-          description: "Request timeout in milliseconds (default: 60000). Use 180000+ for slow tools like NotebookLM.",
+          description:
+            "Request timeout in milliseconds (default: 60000). Use 180000+ for slow tools like NotebookLM.",
         },
       },
       required: ["tool_name"],

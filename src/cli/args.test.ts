@@ -54,3 +54,37 @@ describe("parseArgs", () => {
     expect(parseArgs([]).command).toBeUndefined();
   });
 });
+
+describe("the bridge flags", () => {
+  it("takes --port as a number", () => {
+    expect(parseArgs(["bridge", "serve", "--port", "8791"]).port).toBe(8791);
+  });
+
+  it("rejects a port that is not a TCP port", () => {
+    expect(() => parseArgs(["bridge", "serve", "--port", "70000"])).toThrow(UsageError);
+    expect(() => parseArgs(["bridge", "serve", "--port", "http"])).toThrow(UsageError);
+  });
+
+  it("takes --bind, --cwd and --stdin as text", () => {
+    const a = parseArgs([
+      "bridge",
+      "exec",
+      "cmd",
+      "--bind",
+      "127.0.0.1",
+      "--cwd",
+      "/workspace/sub",
+      "--stdin",
+      "-",
+    ]);
+    expect(a.bind).toBe("127.0.0.1");
+    expect(a.cwd).toBe("/workspace/sub");
+    expect(a.stdin).toBe("-");
+  });
+
+  it("keeps the raw --timeout text alongside the millisecond value", () => {
+    const a = parseArgs(["bridge", "exec", "cmd", "--timeout", "5"]);
+    expect(a.timeoutMs).toBe(5);
+    expect(a.timeoutRaw).toBe("5");
+  });
+});

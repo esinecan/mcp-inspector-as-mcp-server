@@ -66,3 +66,18 @@ describe("mergeIntoConfig", () => {
     expect(mergeIntoConfig(undefined, {}).profiles).toEqual({ default: { block: [] } });
   });
 });
+
+describe("mergeIntoConfig and the bridge block", () => {
+  it("keeps an existing bridge block", () => {
+    const merged = mergeIntoConfig(
+      { mcpServers: {}, bridge: { containerRoot: "/data", port: 9000 } },
+      { forum: { command: "node" } },
+    );
+    expect(merged.bridge).toEqual({ containerRoot: "/data", port: 9000 });
+  });
+
+  it("adds no bridge block when there was none", () => {
+    const merged = mergeIntoConfig(undefined, { forum: { command: "node" } });
+    expect(merged.bridge).toBeUndefined();
+  });
+});

@@ -5,6 +5,7 @@ import { join } from "path";
 import {
   ConfigError,
   DEFAULT_CONFIG_PATH,
+  bridgeSettings,
   blockedBy,
   configPath,
   globToRegExp,
@@ -205,5 +206,50 @@ describe("loadConfig", () => {
     const path = join(dir, "bad.json");
     writeFileSync(path, "{not json");
     expect(() => loadConfig(path)).toThrow(/invalid JSON/);
+  });
+});
+
+describe("the bridge block", () => {
+  it("fills in every default when the block is absent", () => {
+    const settings = bridgeSettings(parseConfig({ mcpServers: {} }, "t"));
+    expect(settings.containerRoot).toBe("/workspace");
+    expect(settings.port).toBe(8790);
+    expect(settings.bind).toBe("0.0.0.0");
+    expect(settings.defaultTimeout).toBe(600);
+    expect(settings.maxTimeout).toBe(3600);
+  });
+
+  it("lets the file override one key and keep the rest", () => {
+    const settings = bridgeSettings(parseConfig({ bridge: { port: 8791 } }, "t"));
+    expect(settings.port).toBe(8791);
+    expect(settings.containerRoot).toBe("/workspace");
+  });
+
+  it("strips a trailing separator from either root", () => {
+    const config = parseConfig(
+      { bridge: { containerRoot: "/workspace/", hostRoot: "D:\\work\\" } },
+      "t",
+    );
+    expect(config.bridge?.containerRoot).toBe("/workspace");
+    expect(config.bridge?.hostRoot).toBe("D:\\work");
+  });
+
+  it("refuses a containerRoot that is not absolute POSIX", () => {
+    expect(() => parseConfig({ bridge: { containerRoot: "workspace" } }, "t")).toThrow(ConfigError);
+  });
+
+  it("refuses a hostRoot that is not absolute Windows", () => {
+    expect(() => parseConfig({ bridge: { hostRoot: "agent-workspace" } }, "t")).toThrow(
+      ConfigError,
+    );
+  });
+
+  it("refuses a port that is not a positive number", () => {
+    expect(() => parseConfig({ bridge: { port: 0 } }, "t")).toThrow(ConfigError);
+    expect(() => parseConfig({ bridge: { port: "8790" } }, "t")).toThrow(ConfigError);
+  });
+
+  it("refuses a bridge block that is not an object", () => {
+    expect(() => parseConfig({ bridge: [] }, "t")).toThrow(ConfigError);
   });
 });
