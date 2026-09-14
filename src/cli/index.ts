@@ -12,10 +12,10 @@
  * reach a server, and the output module is the only thing that writes.
  */
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync, existsSync, readFileSync, realpathSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
-import { pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 
 import { parseArgs, type ParsedArgs } from "./args.js";
 import { BlockedError, CliError, UsageError } from "./errors.js";
@@ -431,11 +431,22 @@ function cmdImportClaude(args: ParsedArgs): number {
   return EXIT_OK;
 }
 
-/** True when node was started on this file rather than importing it. */
+/**
+ * True when node was started on this file rather than importing it.
+ *
+ * The comparison is between real paths, not between URLs. A global install
+ * reaches this file through a symlinked node_modules directory, so the path
+ * node was given and the path this module resolved to differ as text and name
+ * the same file on disk.
+ */
 function isEntryPoint(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
-  return import.meta.url === pathToFileURL(entry).href;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
 if (isEntryPoint()) {
