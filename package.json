@@ -17,7 +17,8 @@
   ],
   "bin": {
     "mcp-inspector": "dist/server.js",
-    "mcp-steer": "bin/mcp-steer.mjs"
+    "mcp-steer": "bin/mcp-steer.mjs",
+    "mcp-cli": "dist/cli/index.js"
   },
   "scripts": {
     "build": "tsc",

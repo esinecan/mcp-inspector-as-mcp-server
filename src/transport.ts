@@ -24,6 +24,8 @@ export interface TransportConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Working directory for a stdio server process. */
+  cwd?: string;
   // For SSE/HTTP transport
   url?: string;
   headers?: Record<string, string>;
@@ -100,6 +102,7 @@ export function createTransport(config: TransportConfig): Transport {
       command: config.command,
       args: config.args || [],
       env,
+      cwd: config.cwd,
       stderr: "pipe",
     });
   }
