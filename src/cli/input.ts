@@ -5,8 +5,9 @@
  */
 
 import { readFileSync } from "fs";
+import { ArgumentError } from "./errors.js";
 
-export class ArgumentError extends Error {}
+export { ArgumentError } from "./errors.js";
 
 /** Read the raw JSON text a call argument points at. */
 export function readArgumentText(

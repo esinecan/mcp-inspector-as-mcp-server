@@ -6,36 +6,35 @@
  * The name is `mcp-cli` rather than `mcp` because the Python SDK already owns
  * `mcp` on PATH. Every call connects, acts and disconnects, so a server edited
  * between two calls shows its new tools on the second one.
+ *
+ * This file holds command bodies and nothing else. The fleet answers every
+ * question that needs no connection, the session provider is the only way to
+ * reach a server, and the output module is the only thing that writes.
  */
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
-import { dirname } from "path";
+import { dirname, join } from "path";
 import { homedir } from "os";
-import { join } from "path";
-import type { Client } from "@modelcontextprotocol/client";
+import { pathToFileURL } from "url";
 
-import { parseArgs, UnknownServerError, UsageError, type ParsedArgs } from "./args.js";
+import { parseArgs, type ParsedArgs } from "./args.js";
+import { BlockedError, CliError, UsageError } from "./errors.js";
+import { configPath, parseConfig, DEFAULT_CONFIG_PATH, type CliConfig } from "./config.js";
+import { loadFleet, type Fleet } from "./fleet.js";
 import {
-  ConfigError,
-  configPath,
-  loadConfig,
-  parseConfig,
-  profileName,
-  resolveProfile,
-  blockedBy,
-  DEFAULT_CONFIG_PATH,
-  type CliConfig,
-  type ResolvedProfile,
-} from "./config.js";
-import { Connector, ServerError, transportOf, CLIENT_VERSION } from "./connection.js";
+  CLIENT_VERSION,
+  EphemeralSessions,
+  ServerError,
+  type SessionProvider,
+  type ToolDescriptor,
+} from "./server-session.js";
 import { resolveAddress, splitAddress } from "./match.js";
-import { ArgumentError, parseArguments, readArgumentText, readStdinSync } from "./input.js";
+import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
+import { Output, columnWidth, firstLine, oneLine, renderContent } from "./output.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
-const EXIT_USAGE = 2;
-const EXIT_BLOCKED = 3;
 
 const HELP = `mcp-cli ${CLIENT_VERSION} — call MCP servers from the shell.
 
@@ -63,12 +62,18 @@ Global flags:
 
 Exit codes: 0 success, 1 failure, 2 usage error, 3 tool blocked by the profile.`;
 
-async function main(argv: string[]): Promise<number> {
+/**
+ * Run one command and return its exit code. Exported so a test can drive the
+ * whole surface in process; the file runs it only when it is the entry point.
+ */
+export async function main(argv: string[]): Promise<number> {
+  const stderr = new Output(false);
+
   let args: ParsedArgs;
   try {
     args = parseArgs(argv);
   } catch (err) {
-    return fail(err as Error, EXIT_USAGE);
+    return fail(stderr, err as Error);
   }
 
   if (args.version) {
@@ -104,62 +109,46 @@ async function main(argv: string[]): Promise<number> {
         throw new UsageError(`Unknown command "${args.command}". Run mcp-cli --help.`);
     }
   } catch (err) {
-    if (err instanceof UsageError) return fail(err, EXIT_USAGE);
-    if (err instanceof ConfigError) return fail(err, EXIT_USAGE);
-    if (err instanceof ArgumentError) return fail(err, EXIT_USAGE);
-    if (err instanceof BlockedError) return fail(err, EXIT_BLOCKED);
-    return fail(err as Error, EXIT_FAILURE);
+    return fail(stderr, err as Error);
   }
 }
 
-class BlockedError extends Error {}
-
-function fail(err: Error, code: number): number {
-  process.stderr.write(`mcp-cli: ${err.message}\n`);
-  return code;
+/** Report a failure and hand back the exit code the error itself carries. */
+function fail(out: Output, err: Error): number {
+  out.note(err.message);
+  return err instanceof CliError ? err.exitCode : EXIT_FAILURE;
 }
 
 /** Everything a server-touching command needs. */
 interface Context {
-  config: CliConfig;
-  profile: ResolvedProfile;
-  connector: Connector;
-  json: boolean;
+  fleet: Fleet;
+  sessions: SessionProvider;
+  out: Output;
 }
 
 function context(args: ParsedArgs): Context {
-  const path = configPath(args.config);
-  const config = loadConfig(path);
-  const profile = resolveProfile(config, profileName(args.profile));
+  const fleet = loadFleet({ config: args.config, profile: args.profile });
   return {
-    config,
-    profile,
-    connector: new Connector(config, { timeoutMs: args.timeoutMs }),
-    json: args.json,
+    fleet,
+    sessions: new EphemeralSessions(fleet, { timeoutMs: args.timeoutMs }),
+    out: new Output(args.json),
   };
 }
 
-function emit(json: boolean, value: unknown, text: () => string): void {
-  if (json) {
-    process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
-  } else {
-    const rendered = text();
-    process.stdout.write(rendered.endsWith("\n") || rendered === "" ? rendered : `${rendered}\n`);
-  }
+/** The one positional a command requires, or a usage error naming what it is. */
+function required(args: ParsedArgs, index: number, what: string): string {
+  const value = args.positionals[index];
+  if (!value) throw new UsageError(what);
+  return value;
 }
 
 /* -------------------------------------------------------------- servers -- */
 
 function cmdServers(args: ParsedArgs): number {
   const ctx = context(args);
-  const rows = Object.entries(ctx.config.mcpServers).map(([name, entry]) => ({
-    name,
-    transport: transportOf(entry),
-    target: entry.url ?? [entry.command, ...(entry.args ?? [])].join(" "),
-  }));
-  rows.sort((a, b) => a.name.localeCompare(b.name));
+  const rows = ctx.fleet.describe();
 
-  emit(ctx.json, { profile: ctx.profile.name, servers: rows }, () => {
+  ctx.out.emit({ profile: ctx.fleet.profile.name, servers: rows }, () => {
     if (rows.length === 0) return "(no servers configured)";
     const width = Math.max(...rows.map((r) => r.name.length));
     return rows
@@ -179,36 +168,30 @@ interface ToolRow {
   blockedBy?: string;
 }
 
-async function listServerTools(ctx: Context, serverName: string): Promise<ToolRow[]> {
-  return ctx.connector.with(serverName, async (client) => {
-    const result = await client.listTools(undefined, ctx.connector.requestOptions);
-    return result.tools.map((tool) => {
-      const address = `${serverName}.${tool.name}`;
-      const pattern = blockedBy(address, ctx.profile);
-      const row: ToolRow = {
-        address,
-        server: serverName,
-        name: tool.name,
-        description: tool.description,
-      };
-      if (pattern) row.blockedBy = pattern;
-      return row;
-    });
+/** Mark each tool of one server with the block pattern that covers it. */
+function toRows(fleet: Fleet, serverName: string, tools: ToolDescriptor[]): ToolRow[] {
+  return tools.map((tool) => {
+    const address = `${serverName}.${tool.name}`;
+    const pattern = fleet.blockedBy(address);
+    const row: ToolRow = { address, server: serverName, name: tool.name };
+    if (tool.description !== undefined) row.description = tool.description;
+    if (pattern) row.blockedBy = pattern;
+    return row;
   });
 }
 
 async function cmdTools(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
   const target = args.positionals[0];
-  const names = target ? [target] : Object.keys(ctx.config.mcpServers).sort();
-  if (target) ctx.connector.entry(target); // fail early on an unknown name
+  const names = target ? [ctx.fleet.resolveServer(target)] : ctx.fleet.names();
 
   const rows: ToolRow[] = [];
   const errors: Array<{ server: string; error: string }> = [];
 
   for (const name of names) {
     try {
-      rows.push(...(await listServerTools(ctx, name)));
+      const tools = await ctx.sessions.run(name, (session) => session.listTools());
+      rows.push(...toRows(ctx.fleet, name, tools));
     } catch (err) {
       // One unreachable server must not sink a whole-fleet listing.
       errors.push({ server: name, error: oneLine((err as Error).message) });
@@ -217,13 +200,13 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
 
   const visible = args.all ? rows : rows.filter((r) => !r.blockedBy);
 
-  emit(ctx.json, { profile: ctx.profile.name, tools: visible, errors }, () => {
+  ctx.out.emit({ profile: ctx.fleet.profile.name, tools: visible, errors }, () => {
     const lines: string[] = [];
     if (visible.length === 0) lines.push("(no tools)");
-    const width = Math.min(48, Math.max(0, ...visible.map((r) => r.address.length)));
+    const width = columnWidth(visible.map((r) => r.address));
     for (const row of visible) {
       const mark = row.blockedBy
-        ? ` [blocked by profile ${ctx.profile.name}: ${row.blockedBy}]`
+        ? ` [blocked by profile ${ctx.fleet.profile.name}: ${row.blockedBy}]`
         : "";
       const desc = row.description ? `  ${firstLine(row.description)}` : "";
       lines.push(`${row.address.padEnd(width)}${desc}${mark}`);
@@ -243,8 +226,7 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
 
 async function cmdCall(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
-  const query = args.positionals[0];
-  if (!query) throw new UsageError("call needs a server.tool address");
+  const query = required(args, 0, "call needs a server.tool address");
 
   const split = splitAddress(query);
   if (!split) throw new UsageError(`"${query}" is not a server.tool address`);
@@ -252,90 +234,84 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
   // Read the arguments before connecting, so a bad payload costs no process.
   const rawArgs = parseArguments(readArgumentText(args.positionals[1], readStdinSync));
 
-  const serverName = resolveServerName(ctx, split.server);
-  const rows = await listServerTools(ctx, serverName);
-  const address = pickAddress(ctx, `${serverName}.${split.tool}`, rows);
+  const serverName = ctx.fleet.resolveServer(split.server);
+  // An address the profile blocks outright never reaches the server at all.
+  refuseIfBlocked(ctx, `${serverName}.${split.tool}`);
 
-  const toolName = address.slice(serverName.length + 1);
-  const result = await ctx.connector.with(serverName, (client) =>
-    client.callTool({ name: toolName, arguments: rawArgs }, ctx.connector.requestOptions),
-  );
+  const result = await ctx.sessions.run(serverName, async (session) => {
+    const tools = await session.listTools();
+    const toolName = pickTool(ctx, `${serverName}.${split.tool}`, serverName, tools);
+    return session.callTool(toolName, rawArgs);
+  });
 
-  const isError = (result as { isError?: boolean }).isError === true;
-  emit(ctx.json, result, () => renderContent(result));
-  return isError ? EXIT_FAILURE : EXIT_OK;
+  ctx.out.emit(result, () => renderContent(result));
+  return result.isError === true ? EXIT_FAILURE : EXIT_OK;
 }
 
-/** Resolve a possibly-fuzzy server name against the config. */
-function resolveServerName(ctx: Context, query: string): string {
-  const names = Object.keys(ctx.config.mcpServers);
-  if (names.includes(query)) return query;
-  const hits = names.filter((n) => n.toLowerCase() === query.toLowerCase());
-  if (hits.length === 1) return hits[0];
-  throw new UnknownServerError(
-    `Unknown server "${query}". Configured servers: ${names.sort().join(", ") || "(none)"}`,
-  );
+/** Raise when the profile blocks this exact address. */
+function refuseIfBlocked(ctx: Context, address: string): void {
+  const pattern = ctx.fleet.blockedBy(address);
+  if (pattern) {
+    throw new BlockedError(
+      `${address} is blocked by profile "${ctx.fleet.profile.name}" (pattern "${pattern}")`,
+    );
+  }
 }
 
-/** Exact, then fuzzy, then the blocklist check. */
-function pickAddress(ctx: Context, query: string, rows: ToolRow[]): string {
-  const match = resolveAddress(
-    query,
-    rows.map((r) => r.address),
-  );
+/** Exact, then fuzzy, then the blocklist check. Returns the bare tool name. */
+function pickTool(
+  ctx: Context,
+  query: string,
+  serverName: string,
+  tools: ToolDescriptor[],
+): string {
+  const addresses = tools.map((t) => `${serverName}.${t.name}`);
+  const match = resolveAddress(query, addresses);
+
   if (match.kind === "none") {
     throw new ServerError(
-      `No tool matches "${query}". Run: mcp-cli tools ${query.split(".")[0]}`,
-      query,
+      `No tool matches "${query}". Run: mcp-cli tools ${serverName}`,
+      serverName,
     );
   }
   if (match.kind === "ambiguous") {
     throw new ServerError(
       `"${query}" is ambiguous. Candidates: ${match.candidates.join(", ")}`,
-      query,
+      serverName,
     );
   }
   if (match.kind === "fuzzy") {
-    process.stderr.write(`mcp-cli: "${query}" resolved to ${match.address}\n`);
+    ctx.out.note(`"${query}" resolved to ${match.address}`);
   }
 
-  const pattern = blockedBy(match.address, ctx.profile);
-  if (pattern) {
-    throw new BlockedError(
-      `${match.address} is blocked by profile "${ctx.profile.name}" (pattern "${pattern}")`,
-    );
-  }
-  return match.address;
+  refuseIfBlocked(ctx, match.address);
+  return match.address.slice(serverName.length + 1);
 }
 
 /* ----------------------------------------------------------------- info -- */
 
 async function cmdInfo(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
-  const target = args.positionals[0];
-  if (!target) throw new UsageError("info needs a server name");
-  const serverName = resolveServerName(ctx, target);
+  const serverName = ctx.fleet.resolveServer(required(args, 0, "info needs a server name"));
 
-  const payload = await ctx.connector.with(serverName, async (client, info) => {
-    const capabilities = client.getServerCapabilities();
-    return {
-      server: serverName,
-      transport: info.transport,
-      serverInfo: info.serverInfo ?? null,
-      protocolVersion: info.protocolVersion ?? null,
-      era: info.era ?? null,
-      capabilities: capabilities ?? null,
-    };
-  });
+  const info = await ctx.sessions.run(serverName, async (session) => session.info);
+  const payload = {
+    server: serverName,
+    transport: info.transport,
+    serverInfo: info.serverInfo ?? null,
+    protocolVersion: info.protocolVersion ?? null,
+    era: info.era ?? null,
+    capabilities: info.capabilities,
+  };
 
-  emit(ctx.json, payload, () =>
+  ctx.out.emit(payload, () =>
     [
       `server           ${payload.server}`,
       `transport        ${payload.transport}`,
       `serverInfo       ${payload.serverInfo ? `${payload.serverInfo.name ?? "?"} ${payload.serverInfo.version ?? ""}`.trim() : "(none)"}`,
       `protocolVersion  ${payload.protocolVersion ?? "(unknown)"}`,
       `era              ${payload.era ?? "(unknown)"}`,
-      `capabilities     ${payload.capabilities ? Object.keys(payload.capabilities).sort().join(", ") : "(none)"}`,
+      `capabilities     ${payload.capabilities.length > 0 ? payload.capabilities.join(", ") : "(none)"}`,
     ].join("\n"),
   );
   return EXIT_OK;
@@ -345,22 +321,14 @@ async function cmdInfo(args: ParsedArgs): Promise<number> {
 
 async function cmdResources(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
-  const target = args.positionals[0];
-  if (!target) throw new UsageError("resources needs a server name");
-  const serverName = resolveServerName(ctx, target);
+  const serverName = ctx.fleet.resolveServer(required(args, 0, "resources needs a server name"));
 
-  const resources = await ctx.connector.with(serverName, async (client: Client) => {
-    if (!client.getServerCapabilities()?.resources) return null;
-    const result = await client.listResources(undefined, ctx.connector.requestOptions);
-    return result.resources;
-  });
-
+  const resources = await ctx.sessions.run(serverName, (session) => session.listResources());
   if (resources === null) {
-    process.stderr.write(`mcp-cli: ${serverName} advertises no resources capability
-`);
+    ctx.out.note(`${serverName} advertises no resources capability`);
   }
 
-  emit(ctx.json, { server: serverName, resources: resources ?? [] }, () =>
+  ctx.out.emit({ server: serverName, resources: resources ?? [] }, () =>
     resources === null || resources.length === 0
       ? "(no resources)"
       : resources.map((r) => `${r.uri}  ${r.name ?? ""}`.trimEnd()).join("\n"),
@@ -370,15 +338,13 @@ async function cmdResources(args: ParsedArgs): Promise<number> {
 
 async function cmdRead(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
-  const [target, uri] = args.positionals;
-  if (!target || !uri) throw new UsageError("read needs a server name and a resource URI");
-  const serverName = resolveServerName(ctx, target);
+  const target = required(args, 0, "read needs a server name and a resource URI");
+  const uri = required(args, 1, "read needs a server name and a resource URI");
+  const serverName = ctx.fleet.resolveServer(target);
 
-  const result = await ctx.connector.with(serverName, (client) =>
-    client.readResource({ uri }, ctx.connector.requestOptions),
-  );
+  const result = await ctx.sessions.run(serverName, (session) => session.readResource(uri));
 
-  emit(ctx.json, result, () =>
+  ctx.out.emit(result, () =>
     (result.contents ?? [])
       .map((c) => ("text" in c && typeof c.text === "string" ? c.text : JSON.stringify(c)))
       .join("\n"),
@@ -388,22 +354,14 @@ async function cmdRead(args: ParsedArgs): Promise<number> {
 
 async function cmdPrompts(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
-  const target = args.positionals[0];
-  if (!target) throw new UsageError("prompts needs a server name");
-  const serverName = resolveServerName(ctx, target);
+  const serverName = ctx.fleet.resolveServer(required(args, 0, "prompts needs a server name"));
 
-  const prompts = await ctx.connector.with(serverName, async (client) => {
-    if (!client.getServerCapabilities()?.prompts) return null;
-    const result = await client.listPrompts(undefined, ctx.connector.requestOptions);
-    return result.prompts;
-  });
-
+  const prompts = await ctx.sessions.run(serverName, (session) => session.listPrompts());
   if (prompts === null) {
-    process.stderr.write(`mcp-cli: ${serverName} advertises no prompts capability
-`);
+    ctx.out.note(`${serverName} advertises no prompts capability`);
   }
 
-  emit(ctx.json, { server: serverName, prompts: prompts ?? [] }, () =>
+  ctx.out.emit({ server: serverName, prompts: prompts ?? [] }, () =>
     prompts === null || prompts.length === 0
       ? "(no prompts)"
       : prompts
@@ -417,11 +375,10 @@ async function cmdPrompts(args: ParsedArgs): Promise<number> {
 
 async function cmdPrompt(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
-  const query = args.positionals[0];
-  if (!query) throw new UsageError("prompt needs a server.name address");
+  const query = required(args, 0, "prompt needs a server.name address");
   const split = splitAddress(query);
   if (!split) throw new UsageError(`"${query}" is not a server.name address`);
-  const serverName = resolveServerName(ctx, split.server);
+  const serverName = ctx.fleet.resolveServer(split.server);
 
   const raw = parseArguments(readArgumentText(args.positionals[1], readStdinSync));
   const promptArgs: Record<string, string> = {};
@@ -429,11 +386,11 @@ async function cmdPrompt(args: ParsedArgs): Promise<number> {
     promptArgs[k] = typeof v === "string" ? v : JSON.stringify(v);
   }
 
-  const result = await ctx.connector.with(serverName, (client) =>
-    client.getPrompt({ name: split.tool, arguments: promptArgs }, ctx.connector.requestOptions),
+  const result = await ctx.sessions.run(serverName, (session) =>
+    session.getPrompt(split.tool, promptArgs),
   );
 
-  emit(ctx.json, result, () =>
+  ctx.out.emit(result, () =>
     (result.messages ?? [])
       .map((m) => {
         const content = m.content as { type?: string; text?: string };
@@ -449,6 +406,7 @@ async function cmdPrompt(args: ParsedArgs): Promise<number> {
 function cmdImportClaude(args: ParsedArgs): number {
   const from = args.from ?? join(homedir(), ".claude.json");
   const out = args.out ?? configPath(args.config);
+  const output = new Output(args.json);
 
   const { servers, skipped } = convertServers(readClaudeServers(from));
 
@@ -461,56 +419,32 @@ function cmdImportClaude(args: ParsedArgs): number {
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
 
-  emit(
-    args.json,
-    { from, out, imported: Object.keys(servers).sort(), skipped: skipped.sort() },
-    () =>
-      [
-        `wrote ${out}`,
-        `imported ${Object.keys(servers).length} servers from ${from}`,
-        skipped.length > 0 ? `skipped: ${skipped.sort().join(", ")}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n"),
+  output.emit({ from, out, imported: Object.keys(servers).sort(), skipped: skipped.sort() }, () =>
+    [
+      `wrote ${out}`,
+      `imported ${Object.keys(servers).length} servers from ${from}`,
+      skipped.length > 0 ? `skipped: ${skipped.sort().join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
   );
   return EXIT_OK;
 }
 
-/* ------------------------------------------------------------- helpers -- */
-
-function firstLine(text: string): string {
-  const line = text.split("\n")[0].trim();
-  return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+/** True when node was started on this file rather than importing it. */
+function isEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(entry).href;
 }
 
-function oneLine(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+if (isEntryPoint()) {
+  main(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((err: Error) => {
+      process.stderr.write(`mcp-cli: ${err.message}\n`);
+      process.exitCode = EXIT_FAILURE;
+    });
 }
-
-/** Render an MCP result's content blocks as plain text. */
-function renderContent(result: unknown): string {
-  const r = result as {
-    content?: Array<{ type?: string; text?: string; [k: string]: unknown }>;
-    structuredContent?: unknown;
-  };
-  if (Array.isArray(r.content) && r.content.length > 0) {
-    return r.content
-      .map((block) =>
-        block.type === "text" && typeof block.text === "string"
-          ? block.text
-          : JSON.stringify(block),
-      )
-      .join("\n");
-  }
-  if (r.structuredContent !== undefined) return JSON.stringify(r.structuredContent, null, 2);
-  return JSON.stringify(result, null, 2);
-}
-
-main(process.argv.slice(2))
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((err: Error) => {
-    process.stderr.write(`mcp-cli: ${err.message}\n`);
-    process.exitCode = EXIT_FAILURE;
-  });

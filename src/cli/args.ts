@@ -3,6 +3,8 @@
  * argument-parsing dependency and the surface is small.
  */
 
+import { UsageError } from "./errors.js";
+
 export interface ParsedArgs {
   command?: string;
   positionals: string[];
@@ -19,10 +21,7 @@ export interface ParsedArgs {
   out?: string;
 }
 
-export class UsageError extends Error {}
-
-/** A name the config file does not hold. A usage error, not a server failure. */
-export class UnknownServerError extends UsageError {}
+export { UsageError, UnknownServerError } from "./errors.js";
 
 const VALUE_FLAGS = new Set(["--config", "--profile", "--timeout", "--from", "--out"]);
 

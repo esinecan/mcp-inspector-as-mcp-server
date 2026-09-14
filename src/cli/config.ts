@@ -11,6 +11,7 @@ import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join, isAbsolute, resolve } from "path";
 import type { NegotiationMode, TransportType } from "../transport.js";
+import { ConfigError } from "./errors.js";
 
 /** One entry of `mcpServers`. Stdio when it has a command, HTTP/SSE when a url. */
 export interface ServerEntry {
@@ -47,7 +48,7 @@ export interface ResolvedProfile {
 export const DEFAULT_CONFIG_DIR = join(homedir(), ".agents");
 export const DEFAULT_CONFIG_PATH = join(DEFAULT_CONFIG_DIR, "mcp-cli.json");
 
-export class ConfigError extends Error {}
+export { ConfigError } from "./errors.js";
 
 /**
  * Decide which config file to read. The flag wins, then `MCP_CLI_CONFIG`, then

@@ -16,21 +16,54 @@ The daemon removes the launch, not the protocol work.
 
 ## The seam
 
-`src/cli/connection.ts` holds one method:
+`src/cli/server-session.ts` holds two interfaces:
 
 ```ts
-connector.with(serverName, async (client, info) => { ... })
+interface SessionProvider {
+  run<T>(serverName: string, fn: (session: ServerSession) => Promise<T>): Promise<T>;
+}
+
+interface ServerSession {
+  readonly info: ConnectionInfo;
+  listTools(): Promise<ToolDescriptor[]>;
+  callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>;
+  listResources(): Promise<ResourceDescriptor[] | null>;
+  readResource(uri: string): Promise<ResourceResult>;
+  listPrompts(): Promise<PromptDescriptor[] | null>;
+  getPrompt(name: string, args: Record<string, string>): Promise<PromptResult>;
+}
 ```
 
-Every command goes through it and no command creates a transport itself. The
-daemon replaces the body of that method with: try the daemon, and fall back to
-the ephemeral path when the daemon is absent or refuses. Nothing above the seam
-changes, and the fallback keeps the CLI working on a box where no daemon runs.
+Every command goes through `SessionProvider.run`. No command creates a
+transport, holds an SDK `Client`, or passes a timeout, because the session
+carries its own budget. The capability checks are inside the session too: a
+server with no resources capability makes `listResources` return null.
+
+v0 ships one adapter, `EphemeralSessions`. It connects, runs the callback and
+disconnects.
+
+The daemon is a second adapter for the same two interfaces. That is the point of
+the shape. A daemon answers over its own loopback surface and returns JSON, so
+it can never hand a caller a live `Client` object; it can return the result
+shapes above. `DaemonSessions.run` dials the daemon and its `ServerSession`
+forwards each of the seven operations. Choosing between the two adapters is one
+decision taken once, where the `Context` is built in `src/cli/index.ts`:
+
+```ts
+sessions: daemonAvailable() ? new DaemonSessions(...) : new EphemeralSessions(fleet, ...)
+```
+
+A connection refusal on the daemon port means no daemon, so the ephemeral
+adapter runs and the CLI keeps working on a box where no daemon is started.
+
+The other half of the CLI needs no daemon at all. `src/cli/fleet.ts` answers
+which servers exist, which name the user meant and what the profile blocks,
+with no connection, so the daemon never has to serve those questions.
 
 ## Lifecycle
 
-1. `Connector.with` tries the daemon on a fixed loopback port. A connection
-   refusal is not an error; it means no daemon, so the ephemeral path runs.
+1. `DaemonSessions.run` tries the daemon on a fixed loopback port. A connection
+   refusal is not an error; it means no daemon, so `EphemeralSessions` runs.
 2. A daemon that is present holds a `sessionRegistry` from `src/session.ts`,
    which already keys live `Client` plus `Transport` pairs by id and already
    garbage-collects an entry after 30 idle minutes. The daemon keys those
@@ -74,7 +107,8 @@ and is reached at `http://127.0.0.1:8766/mcp`.
   explicit `mcp-cli daemon start`. On-demand start is convenient and makes the
   first call's latency unpredictable.
 - Whether the daemon enforces the profile blocklist as well. v0 enforces it in
-  the CLI process. Enforcing it in both places is defensive; enforcing it only
-  in the daemon would move the rule away from the config file the user edits.
+  the CLI process, in `Fleet.blockedBy`, before any session is opened.
+  Enforcing it in both places is defensive; enforcing it only in the daemon
+  would move the rule away from the config file the user edits.
 - Authentication. It is out of scope for v0 and a warm connection holding a
   credential raises questions v0 does not have to answer.
