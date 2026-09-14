@@ -3,7 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { PathMap } from "./path-map.js";
-import { execBridged, BridgeExecError, TIMEOUT_EXIT, type ExecOptions } from "./exec.js";
+import {
+  execBridged,
+  bridgeErrorMessage,
+  BridgeExecError,
+  TIMEOUT_EXIT,
+  type ExecOptions,
+} from "./exec.js";
 
 /** These run a real shell, so they are written for the host cmd.exe. */
 const onWindows = process.platform === "win32";
@@ -95,5 +101,43 @@ describe.runIf(onWindows)("execBridged against cmd.exe", () => {
     const result = await execBridged({ cmd: "type /workspace/missing.txt" }, options);
     expect(result.exit).not.toBe(0);
     expect(result.stderr).not.toContain(hostRoot);
+  });
+});
+
+describe("request checking", () => {
+  it("rejects a request that is not an object", async () => {
+    await expect(execBridged("dir", options)).rejects.toBeInstanceOf(BridgeExecError);
+    await expect(execBridged(null, options)).rejects.toThrow(/must be a JSON object/);
+  });
+
+  it("rejects a missing or empty cmd", async () => {
+    await expect(execBridged({}, options)).rejects.toThrow(/cmd is required/);
+    await expect(execBridged({ cmd: "" }, options)).rejects.toThrow(/cmd is required/);
+    await expect(execBridged({ cmd: 7 }, options)).rejects.toThrow(/cmd is required/);
+  });
+
+  it("rejects a cwd or stdin of the wrong type without throwing synchronously", () => {
+    // A synchronous throw here would take the HTTP adapter down, because it
+    // calls execBridged from inside a stream callback.
+    const bad = execBridged({ cmd: "echo hi", cwd: 5 }, options);
+    return Promise.all([
+      expect(bad).rejects.toThrow(/cwd must be a string/),
+      expect(execBridged({ cmd: "echo hi", stdin: 5 }, options)).rejects.toThrow(
+        /stdin must be a string/,
+      ),
+    ]);
+  });
+
+  it("treats a useless timeout as no timeout at all", async () => {
+    if (!onWindows) return;
+    const r = await execBridged({ cmd: "echo fine", timeout: "soon" }, options);
+    expect(r.exit).toBe(0);
+  });
+});
+
+describe("bridgeErrorMessage", () => {
+  it("reads a bridge failure and stringifies anything else", () => {
+    expect(bridgeErrorMessage(new BridgeExecError("no cmd"))).toBe("no cmd");
+    expect(bridgeErrorMessage("boom")).toBe("boom");
   });
 });

@@ -2,7 +2,9 @@
  * The MCP adapter: a stdio server with one tool, `host_exec`.
  *
  * It is a peer of the HTTP adapter, not a layer over it. Both call
- * `execBridged` directly, so the two surfaces cannot drift apart.
+ * `execBridged` directly, so the two surfaces cannot drift apart. The tool
+ * arguments are passed on unchecked, because `execBridged` is the single place
+ * that checks them.
  *
  * A non-zero exit is an ordinary result, not a tool error. `isError` is set
  * only when the bridge could not start the command at all. An agent that reads
@@ -11,7 +13,7 @@
 
 import { Server, type Tool } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
-import { execBridged, BridgeExecError, type ExecOptions, type ExecRequest } from "./exec.js";
+import { execBridged, bridgeErrorMessage, type ExecOptions } from "./exec.js";
 
 export const HOST_EXEC = "host_exec";
 
@@ -77,10 +79,10 @@ export function createBridgeMcpServer(options: BridgeMcpOptions): Server {
       };
     }
     try {
-      const result = await execBridged((args ?? {}) as unknown as ExecRequest, options);
+      const result = await execBridged(args ?? {}, options);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
-      const message = err instanceof BridgeExecError ? err.message : String(err);
+      const message = bridgeErrorMessage(err);
       return {
         content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }],
         isError: true,

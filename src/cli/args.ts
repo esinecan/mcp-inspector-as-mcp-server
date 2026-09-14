@@ -25,11 +25,13 @@ export interface ParsedArgs {
   cwd?: string;
   stdin?: string;
   /**
-   * The raw text of `--timeout`. `timeoutMs` is the MCP request budget in
-   * milliseconds; `bridge exec` reads the same flag as seconds, and keeping the
-   * text lets each command apply its own unit without a second flag name.
+   * The same `--timeout` number read as seconds. `bridge exec` is its only
+   * reader: the exec wire format and the Python bridge it replaces both count
+   * in seconds, while `timeoutMs` is the MCP request budget in milliseconds.
+   * One flag, one validation, two units, and the command picks the field that
+   * names its own unit.
    */
-  timeoutRaw?: string;
+  timeoutSeconds?: number;
 }
 
 export { UsageError, UnknownServerError } from "./errors.js";
@@ -149,7 +151,7 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
         throw new UsageError(`--timeout needs a positive number of milliseconds, got "${value}"`);
       }
       parsed.timeoutMs = ms;
-      parsed.timeoutRaw = value;
+      parsed.timeoutSeconds = ms;
       return;
     }
   }

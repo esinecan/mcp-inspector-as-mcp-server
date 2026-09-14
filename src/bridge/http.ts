@@ -5,10 +5,14 @@
  * posts to `host.docker.internal:8790` keeps working unchanged. There is no
  * authentication. The boundary is the Windows firewall, and the intended use is
  * same-machine, with a container reaching its host.
+ *
+ * The adapter validates nothing about the request body beyond "it is JSON".
+ * Field checking lives in `execBridged`, so this adapter and the MCP adapter
+ * cannot disagree about what a valid request is.
  */
 
 import { createServer, type Server as HttpServer } from "http";
-import { execBridged, BridgeExecError, type ExecOptions, type ExecRequest } from "./exec.js";
+import { execBridged, bridgeErrorMessage, type ExecOptions } from "./exec.js";
 
 export interface BridgeHttpOptions extends ExecOptions {
   /** One line per request goes here. Defaults to stderr. */
@@ -22,22 +26,22 @@ function readBody(stream: NodeJS.ReadableStream, onDone: (body: string | null) =
   const chunks: Buffer[] = [];
   let size = 0;
   let ended = false;
+  const done = (body: string | null): void => {
+    if (ended) return;
+    ended = true;
+    onDone(body);
+  };
   stream.on("data", (c: Buffer) => {
     size += c.length;
     if (size > MAX_BODY) {
-      if (!ended) {
-        ended = true;
-        onDone(null);
-      }
+      done(null);
       return;
     }
     chunks.push(c);
   });
-  stream.on("end", () => {
-    if (ended) return;
-    ended = true;
-    onDone(Buffer.concat(chunks).toString("utf8"));
-  });
+  // A client that disconnects mid-body must not take the server with it.
+  stream.on("error", () => done(null));
+  stream.on("end", () => done(Buffer.concat(chunks).toString("utf8")));
 }
 
 /** Build the HTTP server. The caller decides when and where it listens. */
@@ -46,47 +50,49 @@ export function createBridgeHttpServer(options: BridgeHttpOptions): HttpServer {
 
   return createServer((req, res) => {
     const started = Date.now();
+    const where = `${req.method ?? "?"} ${req.url ?? "?"}`;
 
-    const send = (status: number, payload: unknown): void => {
+    /** The one place a response is written and the one place a line is logged. */
+    const send = (status: number, payload: unknown, note: string): void => {
       const body = Buffer.from(JSON.stringify(payload), "utf8");
       res.writeHead(status, {
         "Content-Type": "application/json",
         "Content-Length": String(body.length),
       });
       res.end(body);
+      log(`${where} -> ${status} ${note} ${Date.now() - started}ms`);
     };
 
     if (req.method !== "POST" || req.url !== "/exec") {
-      send(404, { error: "not found. The bridge serves POST /exec only." });
-      log(`${req.method ?? "?"} ${req.url ?? "?"} -> 404`);
+      send(404, { error: "not found. The bridge serves POST /exec only." }, "");
       return;
     }
 
     readBody(req, (raw) => {
       if (raw === null) {
-        send(413, { error: "request body too large" });
+        send(413, { error: "request body too large, or the client disconnected" }, "body");
         return;
       }
-      let request: ExecRequest;
+      let request: unknown;
       try {
-        request = JSON.parse(raw) as ExecRequest;
+        request = JSON.parse(raw);
       } catch (err) {
-        send(400, { error: `invalid JSON body (${(err as Error).message})` });
-        log(`POST /exec -> 400 invalid JSON`);
+        send(400, { error: `invalid JSON body (${(err as Error).message})` }, "invalid JSON");
         return;
       }
 
       execBridged(request, options).then(
         (result) => {
-          send(200, result);
-          log(
-            `POST /exec cwd=${request.cwd ?? options.pathMap.containerRoot} exit=${result.exit} ${Date.now() - started}ms`,
+          const cwd = (request as { cwd?: unknown }).cwd;
+          send(
+            200,
+            result,
+            `cwd=${typeof cwd === "string" ? cwd : options.pathMap.containerRoot} exit=${result.exit}`,
           );
         },
-        (err: Error) => {
-          const message = err instanceof BridgeExecError ? err.message : String(err);
-          send(500, { error: message });
-          log(`POST /exec -> 500 ${message} ${Date.now() - started}ms`);
+        (err: unknown) => {
+          const message = bridgeErrorMessage(err);
+          send(500, { error: message }, message);
         },
       );
     });

@@ -89,3 +89,21 @@ describe.runIf(onWindows)("the HTTP adapter against cmd.exe", () => {
     expect(logged[logged.length - 1]).toContain("exit=0");
   });
 });
+
+describe("bad bodies", () => {
+  it("answers malformed JSON with 400 and stays up", async () => {
+    const bad = await post("/exec", "{not json");
+    expect(bad.status).toBe(400);
+    expect((bad.json as { error: string }).error).toContain("invalid JSON");
+    const after = await post("/exec", JSON.stringify({ cmd: "echo still here" }));
+    expect(after.status).toBe(200);
+  });
+
+  it("answers a wrongly typed field with 500 and stays up", async () => {
+    const bad = await post("/exec", JSON.stringify({ cmd: "echo hi", cwd: 5 }));
+    expect(bad.status).toBe(500);
+    expect((bad.json as { error: string }).error).toContain("cwd must be a string");
+    const after = await post("/exec", JSON.stringify({ cmd: "echo still here" }));
+    expect(after.status).toBe(200);
+  });
+});

@@ -82,9 +82,14 @@ describe("the bridge flags", () => {
     expect(a.stdin).toBe("-");
   });
 
-  it("keeps the raw --timeout text alongside the millisecond value", () => {
+  it("offers one --timeout number in both units", () => {
     const a = parseArgs(["bridge", "exec", "cmd", "--timeout", "5"]);
     expect(a.timeoutMs).toBe(5);
-    expect(a.timeoutRaw).toBe("5");
+    expect(a.timeoutSeconds).toBe(5);
+  });
+
+  it("rejects a --timeout that is not a positive number, in both units", () => {
+    expect(() => parseArgs(["bridge", "exec", "cmd", "--timeout", "abc"])).toThrow(UsageError);
+    expect(() => parseArgs(["bridge", "exec", "cmd", "--timeout", "0"])).toThrow(UsageError);
   });
 });

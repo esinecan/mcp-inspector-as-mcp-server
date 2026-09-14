@@ -85,13 +85,6 @@ function cmdSelftest(args: ParsedArgs): number {
   return rows.every((r) => r.ok) ? EXIT_OK : EXIT_FAILURE;
 }
 
-/** `--timeout` is milliseconds everywhere else and seconds here, because the
- * wire protocol and the Python bridge it replaces both count in seconds. */
-function execTimeoutS(args: ParsedArgs): number | undefined {
-  if (args.timeoutRaw === undefined) return undefined;
-  return Number(args.timeoutRaw);
-}
-
 async function cmdExec(args: ParsedArgs): Promise<number> {
   const cmd = args.positionals[1];
   if (!cmd)
@@ -101,7 +94,9 @@ async function cmdExec(args: ParsedArgs): Promise<number> {
   const stdin = args.stdin === undefined ? undefined : readArgumentText(args.stdin, readStdinSync);
 
   const result = await execBridged(
-    { cmd, cwd: args.cwd, stdin, timeout: execTimeoutS(args) },
+    // `--timeout` is milliseconds everywhere else and seconds here, because the
+    // wire format and the Python bridge it replaces both count in seconds.
+    { cmd, cwd: args.cwd, stdin, timeout: args.timeoutSeconds },
     options,
   );
 
