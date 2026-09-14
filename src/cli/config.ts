@@ -53,10 +53,7 @@ export class ConfigError extends Error {}
  * Decide which config file to read. The flag wins, then `MCP_CLI_CONFIG`, then
  * the default path.
  */
-export function configPath(
-  flag?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function configPath(flag?: string, env: NodeJS.ProcessEnv = process.env): string {
   const chosen = flag ?? env.MCP_CLI_CONFIG ?? DEFAULT_CONFIG_PATH;
   return isAbsolute(chosen) ? chosen : resolve(process.cwd(), chosen);
 }
@@ -68,11 +65,17 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
   }
   const obj = raw as Record<string, unknown>;
   const servers = obj.mcpServers;
-  if (servers !== undefined && (typeof servers !== "object" || servers === null || Array.isArray(servers))) {
+  if (
+    servers !== undefined &&
+    (typeof servers !== "object" || servers === null || Array.isArray(servers))
+  ) {
     throw new ConfigError(`${source}: "mcpServers" must be an object`);
   }
   const profiles = obj.profiles;
-  if (profiles !== undefined && (typeof profiles !== "object" || profiles === null || Array.isArray(profiles))) {
+  if (
+    profiles !== undefined &&
+    (typeof profiles !== "object" || profiles === null || Array.isArray(profiles))
+  ) {
     throw new ConfigError(`${source}: "profiles" must be an object`);
   }
 
@@ -115,10 +118,7 @@ export function loadConfig(path: string): CliConfig {
  * A name with no value in the environment raises, because a header sent as the
  * literal text `${TOKEN}` fails in a way that is hard to read at the server.
  */
-export function substituteEnv(
-  value: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function substituteEnv(value: string, env: NodeJS.ProcessEnv = process.env): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => {
     const found = env[name];
     if (found === undefined) {
@@ -154,10 +154,7 @@ export function resolveServerEntry(
 }
 
 /** Which profile the run uses: the flag, then MCP_CLI_PROFILE, then "default". */
-export function profileName(
-  flag?: string,
-  env: NodeJS.ProcessEnv = process.env,
-): string {
+export function profileName(flag?: string, env: NodeJS.ProcessEnv = process.env): string {
   return flag ?? env.MCP_CLI_PROFILE ?? "default";
 }
 

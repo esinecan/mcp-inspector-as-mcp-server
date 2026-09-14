@@ -159,17 +159,13 @@ function cmdServers(args: ParsedArgs): number {
   }));
   rows.sort((a, b) => a.name.localeCompare(b.name));
 
-  emit(
-    ctx.json,
-    { profile: ctx.profile.name, servers: rows },
-    () => {
-      if (rows.length === 0) return "(no servers configured)";
-      const width = Math.max(...rows.map((r) => r.name.length));
-      return rows
-        .map((r) => `${r.name.padEnd(width)}  ${r.transport.padEnd(5)}  ${r.target}`)
-        .join("\n");
-    },
-  );
+  emit(ctx.json, { profile: ctx.profile.name, servers: rows }, () => {
+    if (rows.length === 0) return "(no servers configured)";
+    const width = Math.max(...rows.map((r) => r.name.length));
+    return rows
+      .map((r) => `${r.name.padEnd(width)}  ${r.transport.padEnd(5)}  ${r.target}`)
+      .join("\n");
+  });
   return EXIT_OK;
 }
 
@@ -183,10 +179,7 @@ interface ToolRow {
   blockedBy?: string;
 }
 
-async function listServerTools(
-  ctx: Context,
-  serverName: string,
-): Promise<ToolRow[]> {
+async function listServerTools(ctx: Context, serverName: string): Promise<ToolRow[]> {
   return ctx.connector.with(serverName, async (client) => {
     const result = await client.listTools(undefined, ctx.connector.requestOptions);
     return result.tools.map((tool) => {
@@ -224,24 +217,22 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
 
   const visible = args.all ? rows : rows.filter((r) => !r.blockedBy);
 
-  emit(
-    ctx.json,
-    { profile: ctx.profile.name, tools: visible, errors },
-    () => {
-      const lines: string[] = [];
-      if (visible.length === 0) lines.push("(no tools)");
-      const width = Math.min(48, Math.max(0, ...visible.map((r) => r.address.length)));
-      for (const row of visible) {
-        const mark = row.blockedBy ? ` [blocked by profile ${ctx.profile.name}: ${row.blockedBy}]` : "";
-        const desc = row.description ? `  ${firstLine(row.description)}` : "";
-        lines.push(`${row.address.padEnd(width)}${desc}${mark}`);
-      }
-      for (const e of errors) {
-        lines.push(`! ${e.server}: ${e.error}`);
-      }
-      return lines.join("\n");
-    },
-  );
+  emit(ctx.json, { profile: ctx.profile.name, tools: visible, errors }, () => {
+    const lines: string[] = [];
+    if (visible.length === 0) lines.push("(no tools)");
+    const width = Math.min(48, Math.max(0, ...visible.map((r) => r.address.length)));
+    for (const row of visible) {
+      const mark = row.blockedBy
+        ? ` [blocked by profile ${ctx.profile.name}: ${row.blockedBy}]`
+        : "";
+      const desc = row.description ? `  ${firstLine(row.description)}` : "";
+      lines.push(`${row.address.padEnd(width)}${desc}${mark}`);
+    }
+    for (const e of errors) {
+      lines.push(`! ${e.server}: ${e.error}`);
+    }
+    return lines.join("\n");
+  });
 
   // A per-server failure is reported but does not fail the run, unless the
   // caller asked for exactly that one server.
@@ -289,7 +280,10 @@ function resolveServerName(ctx: Context, query: string): string {
 
 /** Exact, then fuzzy, then the blocklist check. */
 function pickAddress(ctx: Context, query: string, rows: ToolRow[]): string {
-  const match = resolveAddress(query, rows.map((r) => r.address));
+  const match = resolveAddress(
+    query,
+    rows.map((r) => r.address),
+  );
   if (match.kind === "none") {
     throw new ServerError(
       `No tool matches "${query}". Run: mcp-cli tools ${query.split(".")[0]}`,
@@ -402,7 +396,9 @@ async function cmdPrompts(args: ParsedArgs): Promise<number> {
     prompts.length === 0
       ? "(no prompts)"
       : prompts
-          .map((p) => `${serverName}.${p.name}  ${p.description ? firstLine(p.description) : ""}`.trimEnd())
+          .map((p) =>
+            `${serverName}.${p.name}  ${p.description ? firstLine(p.description) : ""}`.trimEnd(),
+          )
           .join("\n"),
   );
   return EXIT_OK;
@@ -488,7 +484,11 @@ function renderContent(result: unknown): string {
   };
   if (Array.isArray(r.content) && r.content.length > 0) {
     return r.content
-      .map((block) => (block.type === "text" && typeof block.text === "string" ? block.text : JSON.stringify(block)))
+      .map((block) =>
+        block.type === "text" && typeof block.text === "string"
+          ? block.text
+          : JSON.stringify(block),
+      )
       .join("\n");
   }
   if (r.structuredContent !== undefined) return JSON.stringify(r.structuredContent, null, 2);

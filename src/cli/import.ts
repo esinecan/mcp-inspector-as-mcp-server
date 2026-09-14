@@ -75,7 +75,9 @@ export function readClaudeServers(path: string): Record<string, ClaudeEntry> {
   if (!existsSync(path)) {
     throw new Error(`No Claude Code config at ${path}`);
   }
-  const raw = JSON.parse(readFileSync(path, "utf8")) as { mcpServers?: Record<string, ClaudeEntry> };
+  const raw = JSON.parse(readFileSync(path, "utf8")) as {
+    mcpServers?: Record<string, ClaudeEntry>;
+  };
   return raw.mcpServers ?? {};
 }
 
@@ -84,11 +86,15 @@ export function readClaudeServers(path: string): Record<string, ClaudeEntry> {
  * server list is replaced rather than merged, so a server removed from Claude
  * Code disappears here too.
  */
-export function mergeIntoConfig(existing: CliConfig | undefined, servers: Record<string, ServerEntry>): CliConfig {
+export function mergeIntoConfig(
+  existing: CliConfig | undefined,
+  servers: Record<string, ServerEntry>,
+): CliConfig {
   return {
     mcpServers: servers,
-    profiles: existing?.profiles && Object.keys(existing.profiles).length > 0
-      ? existing.profiles
-      : { default: { block: [] } },
+    profiles:
+      existing?.profiles && Object.keys(existing.profiles).length > 0
+        ? existing.profiles
+        : { default: { block: [] } },
   };
 }

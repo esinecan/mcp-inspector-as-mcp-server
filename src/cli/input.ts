@@ -39,7 +39,7 @@ export function parseArguments(text: string): Record<string, unknown> {
     throw new ArgumentError(`Arguments are not valid JSON: ${(err as Error).message}`);
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ArgumentError("Arguments must be a JSON object, for example {} or {\"key\":\"value\"}");
+    throw new ArgumentError('Arguments must be a JSON object, for example {} or {"key":"value"}');
   }
   return value as Record<string, unknown>;
 }

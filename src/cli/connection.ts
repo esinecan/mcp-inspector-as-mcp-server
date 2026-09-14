@@ -162,7 +162,10 @@ export async function withTimeout<T>(
     return await Promise.race([
       promise,
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms ${what}`)), timeoutMs);
+        timer = setTimeout(
+          () => reject(new Error(`Timed out after ${timeoutMs}ms ${what}`)),
+          timeoutMs,
+        );
       }),
     ]);
   } finally {
