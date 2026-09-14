@@ -376,6 +376,9 @@ mcp-cli prompt elevated-cmd.run_process '{"command":"ls"}'
 mcp-cli import-claude
 # wrote C:/Users/you/.agents/mcp-cli.json
 # imported 19 servers from C:/Users/you/.claude.json
+
+mcp-cli bridge exec "type /workspace/hello.txt"
+# hello from the host bridge
 ```
 
 Global flags, valid on every command:
@@ -387,6 +390,8 @@ Global flags, valid on every command:
 | `--json` | one JSON object on stdout instead of text |
 | `--timeout <ms>` | budget for connecting and for each request |
 | `--all` | with `tools`, also show blocked tools, marked |
+| `--port`, `--bind` | with `bridge serve`, the listening socket |
+| `--cwd`, `--stdin` | with `bridge exec`, the working directory and standard input |
 | `--help`, `--version` | usage text, version |
 
 `import-claude` also takes `--from <path>` for the Claude Code config to read
@@ -446,6 +451,64 @@ Git Bash is the documented shell on Windows. PowerShell rewrites inline JSON
 before the process sees it, and single quotes do not protect it. In PowerShell,
 use the `-` form or the `@path` form instead.
 
+### bridge
+
+`mcp-cli bridge` runs commands in a Windows `cmd.exe` shell for a client that
+lives somewhere else, usually an agent inside a container that needs a real
+Windows shell.
+
+There is no authentication and no allowlist, so anything that can reach the
+socket can run any command as you. Use it on one machine, let the Windows
+firewall prompt be the boundary, and do not expose the port to a network you do
+not control.
+
+One folder has two names. The client says `/workspace`, Windows says
+`C:\Users\you\agent-workspace`. The bridge translates in three places: the
+`cwd`, the command string, and the host paths in stdout and stderr. Two guards
+keep the command rewrite from over-reaching. `http://example.com/workspace/y`
+stays a URL, because the root is preceded by a slash. `/workspace-foo` stays
+itself, because the root is followed by a hyphen. A command that runs out of its
+budget returns exit 124 and `timeout after Ns`.
+
+Configuration is a top-level `bridge` object in `~/.agents/mcp-cli.json`, with
+`containerRoot`, `hostRoot`, `port`, `bind`, `defaultTimeout` and `maxTimeout`.
+Every key is optional and the defaults are `/workspace`,
+`<home>\agent-workspace`, 8790, `0.0.0.0`, 600 and 3600. The timeouts are
+seconds. `--port` and `--bind` override the file.
+
+```bash
+mcp-cli bridge selftest                            # six path-contract rows, exit 1 on any FAIL
+mcp-cli bridge exec "type /workspace/hello.txt"    # one command, no server, the child's exit code
+mcp-cli bridge serve --port 8790                   # POST /exec and nothing else
+mcp-cli bridge mcp                                 # the host_exec tool over stdio
+```
+
+`bridge exec` also takes `--cwd`, `--stdin` and `--timeout`, and `--timeout` is
+seconds here rather than milliseconds.
+
+For OpenHands, start `bridge serve` on the host and post from the container:
+
+```bash
+curl -s -X POST http://host.docker.internal:8790/exec \
+  -H 'Content-Type: application/json' -d '{"cmd":"dir /workspace"}'
+# {"exit":0,"stdout":" Directory of /workspace\r\n...","stderr":""}
+```
+
+For Claude Code, Codex and mcp-cli itself, register the stdio adapter:
+
+```json
+{ "mcpServers": { "bridge": { "command": "mcp-cli", "args": ["bridge", "mcp"] } } }
+```
+
+Then `mcp-cli tools bridge` shows `bridge.host_exec`. A non-zero exit comes back
+as a normal result, not a tool error. The bridge filters no commands; the only
+narrowing is the profile blocklist, which applies when the tool is reached
+through `mcp-cli call`, so `--profile nobridge` with `"block": ["bridge.*"]`
+exits 3.
+
+Full detail, including the config table and the module layout, is in
+[docs/host-bridge.md](docs/host-bridge.md).
+
 ### Connection model
 
 Every call connects, discovers, acts and disconnects. The protocol era is
@@ -469,6 +532,12 @@ the current module layout is in
 │   ├── transport.ts  # Transport factory (stdio, SSE, HTTP) + TracingWrapper
 │   ├── session.ts    # SessionRegistry with GC (30-min TTL)
 │   ├── events.ts     # EventBuffer (ring buffer for notifications)
+│   ├── bridge/       # the host bridge
+│   │   ├── path-map.ts    # /workspace <-> C:\...gent-workspace, three rewrites
+│   │   ├── exec.ts        # run one command through cmd.exe, exit 124 on timeout
+│   │   ├── selftest.ts    # the six path-contract cases
+│   │   ├── http.ts        # POST /exec
+│   │   └── mcp-server.ts  # the host_exec tool over stdio
 │   └── cli/          # mcp-cli
 │       ├── index.ts          # command bodies
 │       ├── fleet.ts          # servers + profile; answers without connecting
@@ -476,6 +545,7 @@ the current module layout is in
 │       ├── output.ts         # text or JSON, one place that writes
 │       ├── errors.ts         # each failure carries its exit code
 │       ├── config.ts         # config file shape, ${ENV}, glob, profiles
+│       ├── bridge.ts         # the four bridge subcommands
 │       ├── args.ts, input.ts, match.ts, import.ts
 ├── bin/
 │   └── mcp-steer.mjs # CLI tool for human steering
@@ -508,6 +578,7 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+- Added `mcp-cli bridge`: a zero-auth host exec bridge with a `/workspace` path contract, served either as `POST /exec` over HTTP or as the `host_exec` MCP tool over stdio. See [docs/host-bridge.md](docs/host-bridge.md)
 - Added the `negotiation` connection parameter for client-side protocol-era negotiation (`legacy` / `auto` / pinned revision)
 - `insp_connect` and `insp_list_sessions` now report the negotiated protocol revision and era of each session
 
