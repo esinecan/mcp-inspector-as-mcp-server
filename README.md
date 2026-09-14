@@ -222,6 +222,115 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 }
 ```
 
+## mcp-cli
+
+The same core, driven from a shell instead of from an MCP client. `mcp-cli` is a
+third bin entry next to `mcp-inspector` and `mcp-steer`. It is non-interactive:
+one command, one result, an exit code. The name is `mcp-cli` rather than `mcp`
+because the Python SDK already installs `mcp` on PATH.
+
+What it adds over the inspector tools is a client-side blocklist. The
+`2026-07-28` spec forbids a server from varying its tool set per connection, so
+narrowing a surface without per-request authorization has to happen in the
+client.
+
+### Config
+
+One JSON file, by default `~/.agents/mcp-cli.json`. Override it with `--config`
+or with the `MCP_CLI_CONFIG` environment variable.
+
+```json
+{
+  "mcpServers": {
+    "forum":   { "command": "node", "args": ["C:/Users/you/dev/forum/index.js"] },
+    "gsearch": { "url": "http://127.0.0.1:8766/mcp" }
+  },
+  "profiles": {
+    "default": { "block": [] },
+    "safe":    { "block": ["gmail.send_*", "forum.post", "linkedin.*"] },
+    "housing": { "extends": "safe", "block": ["cortex.*"] }
+  }
+}
+```
+
+A stdio entry takes `command`, `args`, `env` and `cwd`. A URL entry takes `url`
+and `headers`; the transport is auto-detected, a path ending in `/mcp` meaning
+Streamable HTTP and anything else meaning SSE. A header value written as
+`${NAME}` is replaced from the environment at call time, and an unset name is an
+error rather than a literal header. OAuth is out of scope.
+
+A server that cannot run twice belongs in a `url` entry pointing at its own
+daemon. `mcp-cli` keeps its own config, so a stdio entry shared with a harness
+would be launched as a second process.
+
+Build the file from an existing Claude Code config with:
+
+```bash
+mcp-cli import-claude          # reads ~/.claude.json, keeps existing profiles
+```
+
+### Profiles
+
+Filtering is a blocklist. A profile subtracts from everything the servers
+expose, `extends` chains one profile onto another, and no profile selected means
+`default`, which blocks nothing. Selection order is `--profile`, then
+`MCP_CLI_PROFILE`, then `default`.
+
+A pattern matches the full `server.tool` address. `*` covers any run of
+characters inside one dot-separated segment, so `forum.*` covers a whole server;
+`**` crosses segments. Calling a blocked tool exits 3 with a message naming the
+profile and the pattern.
+
+A blocklist fails open on purpose: a tool a server adds tomorrow is callable
+immediately. That is wanted for servers you own, and it is the cost of not
+maintaining an allowlist for servers you do not.
+
+### Commands
+
+```bash
+mcp-cli servers                        # configured servers and their transports
+mcp-cli tools [server] [--all]         # tools as server.tool; --all marks blocked ones
+mcp-cli call <server.tool> [args]      # call a tool
+mcp-cli info <server>                  # serverInfo, negotiated protocolVersion, era
+mcp-cli resources <server>
+mcp-cli read <server> <uri>
+mcp-cli prompts <server>
+mcp-cli prompt <server.name> [args]
+mcp-cli import-claude
+```
+
+`tools` with no server name lists the whole fleet and reports a server that
+failed to answer as a `!` line rather than aborting the listing.
+
+The address is resolved exactly first. Failing that, one case-insensitive or
+substring match is used and the choice is printed on stderr; several matches are
+an error listing the candidates.
+
+Arguments are JSON, in one of three forms. There is no key=value form.
+
+```bash
+mcp-cli call forum.poll '{}'                  # inline
+echo '{"limit":1}' | mcp-cli call forum.history -   # stdin
+mcp-cli call forum.history @args.json         # a file
+```
+
+Git Bash is the documented shell on Windows, because PowerShell mangles inline
+JSON.
+
+Global flags: `--config <path>`, `--profile <name>`, `--json` for one JSON
+object on stdout, `--timeout <ms>` for connecting and for each request.
+
+Exit codes: 0 success, 1 failure, 2 usage error, 3 blocked by the profile.
+Errors go to stderr.
+
+### Connection model
+
+Every call connects, discovers, acts and disconnects, and the protocol era is
+auto-negotiated so legacy servers keep working. A server edited between two
+calls exposes its new tools on the second one, which makes the CLI a development
+loop with no reload command. `src/cli/connection.ts` holds the one seam a warm
+daemon would replace; see [docs/mcp-cli-daemon.md](docs/mcp-cli-daemon.md).
+
 ## Architecture
 
 ```
@@ -230,7 +339,8 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 │   ├── client.ts     # Client wrapper (hybrid stateless/session mode)
 │   ├── transport.ts  # Transport factory (stdio, SSE, HTTP) + TracingWrapper
 │   ├── session.ts    # SessionRegistry with GC (30-min TTL)
-│   └── events.ts     # EventBuffer (ring buffer for notifications)
+│   ├── events.ts     # EventBuffer (ring buffer for notifications)
+│   └── cli/          # mcp-cli: config, profiles, connection seam, commands
 ├── bin/
 │   └── mcp-steer.mjs # CLI tool for human steering
 ├── tests/            # Integration test scripts (run with npx tsx)
