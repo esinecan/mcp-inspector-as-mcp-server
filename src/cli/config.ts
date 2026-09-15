@@ -11,6 +11,7 @@ import { readFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join, isAbsolute, resolve, win32 } from "path";
 import type { NegotiationMode, TransportType } from "../transport.js";
+import { FORMATS } from "./args.js";
 import { ConfigError } from "./errors.js";
 
 /** One entry of `mcpServers`. Stdio when it has a command, HTTP/SSE when a url. */
@@ -56,10 +57,40 @@ export interface BridgeSettings {
   maxTimeout: number;
 }
 
+/**
+ * The `pruning` block. Every key is optional and falls back to the default
+ * below, so a config file that has never heard of pruning still works.
+ */
+export interface PruningEntry {
+  /** At or above this many characters a rendered result is spilled and headed. */
+  thresholdBytes?: number;
+  /** How much of an oversize result is still emitted inline. */
+  headBytes?: number;
+  /** Where spilled results live, one file per digest. */
+  spillDir?: string;
+  /** How much `--intent` may return. */
+  intentBudget?: number;
+  /** Whether a non-text content block becomes a one-line descriptor. */
+  describeBlocks?: boolean;
+  /** The default re-encoding, overridden by `--format`. */
+  format?: "raw" | "compact" | "table";
+}
+
+/** A pruning block with every default filled in. */
+export interface PruningSettings {
+  thresholdBytes: number;
+  headBytes: number;
+  spillDir: string;
+  intentBudget: number;
+  describeBlocks: boolean;
+  format: "raw" | "compact" | "table";
+}
+
 export interface CliConfig {
   mcpServers: Record<string, ServerEntry>;
   profiles?: Record<string, ProfileEntry>;
   bridge?: BridgeEntry;
+  pruning?: PruningEntry;
 }
 
 export const DEFAULT_BRIDGE: BridgeSettings = {
@@ -69,6 +100,15 @@ export const DEFAULT_BRIDGE: BridgeSettings = {
   bind: "0.0.0.0",
   defaultTimeout: 600,
   maxTimeout: 3600,
+};
+
+export const DEFAULT_PRUNING: PruningSettings = {
+  thresholdBytes: 8000,
+  headBytes: 2000,
+  spillDir: join(homedir(), ".agents", "mcp-cli-spill"),
+  intentBudget: 2000,
+  describeBlocks: true,
+  format: "raw",
 };
 
 /** A profile after its `extends` chain is flattened. */
@@ -129,12 +169,14 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
   }
 
   const bridge = parseBridgeEntry(obj.bridge, source);
+  const pruning = parsePruningEntry(obj.pruning, source);
 
   const config: CliConfig = {
     mcpServers,
     profiles: (profiles ?? {}) as Record<string, ProfileEntry>,
   };
   if (bridge) config.bridge = bridge;
+  if (pruning) config.pruning = pruning;
   return config;
 }
 
@@ -184,6 +226,54 @@ function parseBridgeEntry(raw: unknown, source: string): BridgeEntry | undefined
 /** The bridge block of a config, with defaults filled in. */
 export function bridgeSettings(config: CliConfig | undefined): BridgeSettings {
   return { ...DEFAULT_BRIDGE, ...(config?.bridge ?? {}) };
+}
+
+/** Validate the `pruning` block, the same shape of check the bridge block gets. */
+function parsePruningEntry(raw: unknown, source: string): PruningEntry | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`${source}: "pruning" must be an object`);
+  }
+  const entry = raw as Record<string, unknown>;
+  const out: PruningEntry = {};
+
+  for (const key of ["thresholdBytes", "headBytes", "intentBudget"] as const) {
+    const value = entry[key];
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      throw new ConfigError(`${source}: "pruning.${key}" must be a positive number`);
+    }
+    out[key] = value;
+  }
+  if (entry.spillDir !== undefined) {
+    if (typeof entry.spillDir !== "string" || entry.spillDir.length === 0) {
+      throw new ConfigError(`${source}: "pruning.spillDir" must be a non-empty string`);
+    }
+    out.spillDir = entry.spillDir;
+  }
+  if (entry.describeBlocks !== undefined) {
+    if (typeof entry.describeBlocks !== "boolean") {
+      throw new ConfigError(`${source}: "pruning.describeBlocks" must be a boolean`);
+    }
+    out.describeBlocks = entry.describeBlocks;
+  }
+  if (entry.format !== undefined) {
+    if (
+      typeof entry.format !== "string" ||
+      !FORMATS.includes(entry.format as (typeof FORMATS)[number])
+    ) {
+      throw new ConfigError(
+        `${source}: "pruning.format" must be one of ${FORMATS.join("|")}`,
+      );
+    }
+    out.format = entry.format as PruningEntry["format"];
+  }
+  return out;
+}
+
+/** The pruning block of a config, with defaults filled in. */
+export function pruningSettings(config: CliConfig | undefined): PruningSettings {
+  return { ...DEFAULT_PRUNING, ...(config?.pruning ?? {}) };
 }
 
 /** Read the config file from disk. */

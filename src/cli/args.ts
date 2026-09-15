@@ -32,7 +32,14 @@ export interface ParsedArgs {
    * names its own unit.
    */
   timeoutSeconds?: number;
+  /** `--format`, how a text result is re-encoded before it is printed. */
+  format?: "raw" | "compact" | "table";
+  /** `--intent`, a query that narrows a stored result to what it asked for. */
+  intent?: string;
 }
+
+/** The values `--format` accepts, shared with the config file's pruning block. */
+export const FORMATS = ["raw", "compact", "table"] as const;
 
 export { UsageError, UnknownServerError } from "./errors.js";
 
@@ -46,6 +53,8 @@ const VALUE_FLAGS = new Set([
   "--bind",
   "--cwd",
   "--stdin",
+  "--format",
+  "--intent",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -154,5 +163,15 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
       parsed.timeoutSeconds = ms;
       return;
     }
+    case "--format": {
+      if (!FORMATS.includes(value as (typeof FORMATS)[number])) {
+        throw new UsageError(`--format needs one of ${FORMATS.join("|")}, got "${value}"`);
+      }
+      parsed.format = value as ParsedArgs["format"];
+      return;
+    }
+    case "--intent":
+      parsed.intent = value;
+      return;
   }
 }

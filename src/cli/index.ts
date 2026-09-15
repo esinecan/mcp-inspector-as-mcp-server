@@ -19,7 +19,13 @@ import { fileURLToPath } from "url";
 
 import { parseArgs, type ParsedArgs } from "./args.js";
 import { BlockedError, CliError, UsageError } from "./errors.js";
-import { configPath, parseConfig, DEFAULT_CONFIG_PATH, type CliConfig } from "./config.js";
+import {
+  configPath,
+  parseConfig,
+  pruningSettings,
+  DEFAULT_CONFIG_PATH,
+  type CliConfig,
+} from "./config.js";
 import { loadFleet, type Fleet } from "./fleet.js";
 import {
   CLIENT_VERSION,
@@ -31,10 +37,12 @@ import {
 import { resolveAddress, splitAddress } from "./match.js";
 import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
-import { Output, columnWidth, firstLine, oneLine, renderContent } from "./output.js";
+import { Output, columnWidth, firstLine, oneLine, renderContent, type RenderOptions } from "./output.js";
 import { cmdBridge } from "./bridge.js";
 import { cmdDaemon, daemonEnabled, daemonSettings } from "./daemon.js";
 import { DaemonSessions } from "./daemon-session.js";
+import { fileSpillStore, runSpillCommand } from "./spill.js";
+import { searchStored } from "./intent.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -53,6 +61,7 @@ Usage:
   mcp-cli import-claude                    build the config from ~/.claude.json
   mcp-cli bridge <serve|mcp|selftest|exec> run host commands over the path contract
   mcp-cli daemon <start|stop|status|serve> keep server connections warm between calls
+  mcp-cli spill <get|path|prune>          read back a result that was spilled
 
 Arguments for call and prompt are JSON, given as inline text, as "-" to read
 stdin, or as "@path" to read a file.
@@ -63,6 +72,8 @@ Global flags:
   --json            one JSON object on stdout instead of text
   --timeout <ms>    budget for connecting and for each request
   --all             with "tools", also show blocked tools, marked
+  --format <raw|compact|table>  how a text result is re-encoded, with "call"
+  --intent <text>   narrow a stored result to what it asked for, with "call"
   --port, --bind    with "bridge serve", the listening socket
   --port            with "daemon", its port (env MCP_CLI_DAEMON_PORT, default 8791)
   --cwd, --stdin    with "bridge exec", the working directory and standard input
@@ -103,6 +114,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdBridge(args);
       case "daemon":
         return await cmdDaemon(args);
+      case "spill":
+        return cmdSpill(args);
       case "import-claude":
         return cmdImportClaude(args);
       case "servers":
@@ -140,6 +153,7 @@ interface Context {
   fleet: Fleet;
   sessions: SessionProvider;
   out: Output;
+  render: RenderOptions;
 }
 
 /**
@@ -168,7 +182,17 @@ function context(args: ParsedArgs): Context {
     });
   }
 
-  return { fleet, sessions, out: new Output(args.json) };
+  const out = new Output(args.json);
+  const pruning = pruningSettings(fleet.config);
+  const render: RenderOptions = {
+    describeBlocks: pruning.describeBlocks,
+    format: args.format ?? pruning.format,
+    prune: { thresholdBytes: pruning.thresholdBytes, headBytes: pruning.headBytes },
+    store: fileSpillStore(pruning.spillDir),
+    note: (m) => out.note(m),
+  };
+
+  return { fleet, sessions, out, render };
 }
 
 /** The one positional a command requires, or a usage error naming what it is. */
@@ -280,8 +304,27 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
     return session.callTool(toolName, rawArgs);
   });
 
-  ctx.out.emit(result, () => renderContent(result));
+  // The --json path is untouched: it serialises the raw result object, so no
+  // pruning, describing or re-encoding can ever reach it.
+  ctx.out.emit(result, () => {
+    let text = renderContent(result, ctx.render);
+    if (args.intent !== undefined) {
+      const budget = pruningSettings(ctx.fleet.config).intentBudget;
+      text = searchStored(text, args.intent, { budgetBytes: budget }).text;
+    }
+    return text;
+  });
   return result.isError === true ? EXIT_FAILURE : EXIT_OK;
+}
+
+/* ---------------------------------------------------------------- spill -- */
+
+/** `mcp-cli spill <get|path|prune>`: the read-back surface for spilled results. */
+function cmdSpill(args: ParsedArgs): number {
+  const fleet = loadFleet({ config: args.config, profile: args.profile });
+  const settings = pruningSettings(fleet.config);
+  const out = new Output(args.json);
+  return runSpillCommand(args.positionals, fileSpillStore(settings.spillDir), out);
 }
 
 /** Raise when the profile blocks this exact address. */

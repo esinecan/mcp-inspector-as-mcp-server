@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   ConfigError,
+  DEFAULT_CONFIG_DIR,
   DEFAULT_CONFIG_PATH,
   bridgeSettings,
   blockedBy,
@@ -13,6 +14,7 @@ import {
   matchesGlob,
   parseConfig,
   profileName,
+  pruningSettings,
   resolveProfile,
   resolveServerEntry,
   substituteEnv,
@@ -251,5 +253,73 @@ describe("the bridge block", () => {
 
   it("refuses a bridge block that is not an object", () => {
     expect(() => parseConfig({ bridge: [] }, "t")).toThrow(ConfigError);
+  });
+});
+
+describe("the pruning block", () => {
+  it("fills in every default when the block is absent", () => {
+    const settings = pruningSettings(parseConfig({ mcpServers: {} }, "t"));
+    expect(settings.thresholdBytes).toBe(8000);
+    expect(settings.headBytes).toBe(2000);
+    expect(settings.spillDir).toBe(join(DEFAULT_CONFIG_DIR, "mcp-cli-spill"));
+    expect(settings.intentBudget).toBe(2000);
+    expect(settings.describeBlocks).toBe(true);
+    expect(settings.format).toBe("raw");
+  });
+
+  it("lets the file override each key and keep the rest", () => {
+    const settings = pruningSettings(
+      parseConfig({ pruning: { thresholdBytes: 4000 } }, "t"),
+    );
+    expect(settings.thresholdBytes).toBe(4000);
+    expect(settings.headBytes).toBe(2000);
+  });
+
+  it("overrides every key at once", () => {
+    const settings = pruningSettings(
+      parseConfig(
+        {
+          pruning: {
+            thresholdBytes: 100,
+            headBytes: 50,
+            spillDir: "D:\\spill",
+            intentBudget: 700,
+            describeBlocks: false,
+            format: "table",
+          },
+        },
+        "t",
+      ),
+    );
+    expect(settings).toEqual({
+      thresholdBytes: 100,
+      headBytes: 50,
+      spillDir: "D:\\spill",
+      intentBudget: 700,
+      describeBlocks: false,
+      format: "table",
+    });
+  });
+
+  it("refuses a pruning block that is not an object", () => {
+    expect(() => parseConfig({ pruning: [] }, "t")).toThrow(ConfigError);
+  });
+
+  it("refuses a numeric key that is not a positive number", () => {
+    expect(() => parseConfig({ pruning: { thresholdBytes: 0 } }, "t")).toThrow(ConfigError);
+    expect(() => parseConfig({ pruning: { headBytes: "2000" } }, "t")).toThrow(ConfigError);
+    expect(() => parseConfig({ pruning: { intentBudget: -1 } }, "t")).toThrow(ConfigError);
+  });
+
+  it("refuses a describeBlocks that is not a boolean", () => {
+    expect(() => parseConfig({ pruning: { describeBlocks: "yes" } }, "t")).toThrow(ConfigError);
+  });
+
+  it("refuses a format that is not one of the three names", () => {
+    expect(() => parseConfig({ pruning: { format: "yaml" } }, "t")).toThrow(ConfigError);
+  });
+
+  it("refuses a spillDir that is not a non-empty string", () => {
+    expect(() => parseConfig({ pruning: { spillDir: "" } }, "t")).toThrow(ConfigError);
   });
 });

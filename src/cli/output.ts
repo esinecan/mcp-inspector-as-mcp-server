@@ -8,6 +8,13 @@
  * testable without touching the process streams.
  */
 
+import type { PruneOptions } from "./prune.js";
+import type { SpillStore } from "./spill.js";
+import type { Format } from "./encode.js";
+import { reencode } from "./encode.js";
+import { pruneText } from "./prune.js";
+import { describeBlock } from "./describe.js";
+
 /** One line of text out. */
 export type Sink = (text: string) => void;
 
@@ -21,9 +28,15 @@ export class Output {
   /**
    * Write the result of a command. In JSON mode the value is serialised; in
    * text mode the callback renders it, and it is not called at all otherwise.
+   *
+   * The JSON branch is a contract, not an implementation detail: it feeds jq
+   * pipelines and the daemon's POST /op, so it must keep emitting exactly
+   * `JSON.stringify(value, null, 2)` plus one newline. No re-encoding,
+   * pruning, eliding or re-serialising may ever reach this branch.
    */
   emit(value: unknown, text: () => string): void {
     if (this.json) {
+      // UNTOUCHED BY DESIGN: --json output is byte-faithful to the result.
       this.out(`${JSON.stringify(value, null, 2)}\n`);
       return;
     }
@@ -48,20 +61,38 @@ export function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * How renderContent may reshape a result on the way out. Every field is
+ * supplied by the caller from the config's pruning block and the flags, and a
+ * call with no options at all renders exactly as mcp-cli always has.
+ */
+export interface RenderOptions {
+  describeBlocks: boolean;
+  format: Format;
+  prune: PruneOptions;
+  store: SpillStore;
+  note: (m: string) => void;
+}
+
 /** Render an MCP result's content blocks as plain text. */
-export function renderContent(result: unknown): string {
+export function renderContent(result: unknown, opts?: RenderOptions): string {
   const r = result as {
     content?: Array<{ type?: string; text?: string; [k: string]: unknown }>;
     structuredContent?: unknown;
   };
   if (Array.isArray(r.content) && r.content.length > 0) {
-    return r.content
+    const joined = r.content
       .map((block) =>
         block.type === "text" && typeof block.text === "string"
-          ? block.text
-          : JSON.stringify(block),
+          ? opts
+            ? reencode(block.text, opts.format, opts.note)
+            : block.text
+          : opts?.describeBlocks
+            ? describeBlock(block)
+            : JSON.stringify(block),
       )
       .join("\n");
+    return opts ? pruneText(joined, opts.prune, opts.store).text : joined;
   }
   if (r.structuredContent !== undefined) return JSON.stringify(r.structuredContent, null, 2);
   return JSON.stringify(result, null, 2);

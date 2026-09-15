@@ -55,6 +55,40 @@ describe("parseArgs", () => {
   });
 });
 
+describe("the pruning flags", () => {
+  it("takes --format with a space", () => {
+    expect(parseArgs(["call", "--format", "table", "a.b", "{}"]).format).toBe("table");
+  });
+
+  it("takes --format with an equals sign", () => {
+    expect(parseArgs(["call", "--format=compact", "a.b", "{}"]).format).toBe("compact");
+  });
+
+  it("accepts each of the three format names", () => {
+    for (const f of ["raw", "compact", "table"] as const) {
+      expect(parseArgs(["--format", f]).format).toBe(f);
+    }
+  });
+
+  it("rejects a --format value that is not one of the three names", () => {
+    expect(() => parseArgs(["call", "--format", "yaml"])).toThrow(UsageError);
+    expect(() => parseArgs(["call", "--format=yaml"])).toThrow(/--format/);
+  });
+
+  it("rejects a --format with nothing after it", () => {
+    expect(() => parseArgs(["call", "--format"])).toThrow(/needs a value/);
+  });
+
+  it("takes --intent with a space and with an equals sign", () => {
+    expect(parseArgs(["call", "--intent", "housing", "a.b", "{}"]).intent).toBe("housing");
+    expect(parseArgs(["call", "--intent=housing", "a.b", "{}"]).intent).toBe("housing");
+  });
+
+  it("keeps an --intent that is empty only when written with an equals sign", () => {
+    expect(() => parseArgs(["call", "--intent"])).toThrow(/needs a value/);
+  });
+});
+
 describe("the bridge flags", () => {
   it("takes --port as a number", () => {
     expect(parseArgs(["bridge", "serve", "--port", "8791"]).port).toBe(8791);

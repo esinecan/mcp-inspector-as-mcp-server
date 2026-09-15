@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { Output, columnWidth, firstLine, oneLine, renderContent } from "./output.js";
+import { NO_SPILL } from "./spill.js";
+
+const FIXTURE = join(__dirname, "__fixtures__", "memory-search-result.json");
 
 function capture(json: boolean) {
   const out: string[] = [];
@@ -65,6 +70,33 @@ describe("renderContent", () => {
   it("falls back to structuredContent, then to the whole result", () => {
     expect(renderContent({ structuredContent: { n: 1 } })).toBe('{\n  "n": 1\n}');
     expect(renderContent({ other: 1 })).toBe('{\n  "other": 1\n}');
+  });
+});
+
+describe("the --json contract over a real captured result", () => {
+  const parsed = JSON.parse(readFileSync(FIXTURE, "utf8")) as {
+    content: Array<{ type?: string; text?: string }>;
+  };
+
+  it("emits exactly JSON.stringify(value, null, 2) plus one newline", () => {
+    const c = capture(true);
+    c.output.emit(parsed, () => "");
+    expect(c.out.join("")).toBe(`${JSON.stringify(parsed, null, 2)}\n`);
+  });
+
+  it("renders the fixture byte for byte as content[0].text with no options", () => {
+    expect(renderContent(parsed)).toBe(parsed.content[0].text);
+  });
+
+  it("renders the fixture whole through the rendering options too, today", () => {
+    const rendered = renderContent(parsed, {
+      describeBlocks: true,
+      format: "raw",
+      prune: { thresholdBytes: 8000, headBytes: 2000 },
+      store: NO_SPILL,
+      note: () => {},
+    });
+    expect(rendered).toBe(parsed.content[0].text);
   });
 });
 
