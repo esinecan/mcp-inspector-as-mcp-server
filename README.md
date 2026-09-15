@@ -379,6 +379,11 @@ mcp-cli import-claude
 
 mcp-cli bridge exec "type /workspace/hello.txt"
 # hello from the host bridge
+
+mcp-cli daemon start
+# daemon listening on 127.0.0.1:8791 (pid 26596)
+# config C:\Users\you\.agents\mcp-cli.json
+# log    C:\Users\you\.agents\mcp-cli-daemon.log
 ```
 
 Global flags, valid on every command:
@@ -391,6 +396,7 @@ Global flags, valid on every command:
 | `--timeout <ms>` | budget for connecting and for each request |
 | `--all` | with `tools`, also show blocked tools, marked |
 | `--port`, `--bind` | with `bridge serve`, the listening socket |
+| `--port` | with `daemon`, its port. Also `MCP_CLI_DAEMON_PORT`, default 8791 |
 | `--cwd`, `--stdin` | with `bridge exec`, the working directory and standard input |
 | `--help`, `--version` | usage text, version |
 
@@ -513,18 +519,57 @@ and either way the server keeps serving. Requests run concurrently.
 Full detail, including the config table and the module layout, is in
 [docs/host-bridge.md](docs/host-bridge.md).
 
+### daemon
+
+`mcp-cli daemon` keeps one live connection per server, so two calls reach the
+same server process instead of two. That matters for a stdio server that holds
+its own state: `cortex` holds a Playwright page, and without the daemon the
+second call gets a new process and an empty page.
+
+```bash
+mcp-cli daemon start                                             # explicit, prints the pid
+mcp-cli call cortex.browser_navigate '{"url":"https://example.com"}'
+mcp-cli call cortex.browser_snapshot '{}'                        # same page, same process
+mcp-cli daemon status                                            # what is warm
+mcp-cli daemon stop                                              # close it all
+```
+
+It listens on `127.0.0.1:8791` and nothing else, because it holds connections to
+servers that already carry your credentials. There is no authentication; the
+loopback bind is the boundary. `--port` and `MCP_CLI_DAEMON_PORT` move it, and
+`mcp-cli daemon serve` runs it in the foreground. The port is not 9847, the
+steering API, and not 8790, the bridge.
+
+With no daemon running, every command behaves exactly as it did before: a
+refused connection on 8791 means "no daemon", never a failure. `MCP_CLI_DAEMON=0`
+turns the daemon off for one run without stopping it for other shells.
+
+Two things do not change when a daemon is running. The tool list is never
+cached, so a server edited between two calls still shows its new tools on the
+second one. The profile blocklist is enforced in the CLI process as well as in
+the daemon, so `mcp-cli --profile safe call forum.post` still exits 3 before
+anything is contacted.
+
+One thing to know: `mcp-cli tools` with no server argument connects to every
+configured server, and with the daemon running all of them then stay warm for
+thirty idle minutes. Name a server when you only want one.
+
+Full detail, including the lifecycle and the wire format, is in
+[docs/mcp-cli-daemon.md](docs/mcp-cli-daemon.md).
+
 ### Connection model
 
-Every call connects, discovers, acts and disconnects. The protocol era is
-negotiated per connection, so legacy servers keep working alongside modern ones.
-`mcp-cli info <server>` reports the era a server answered with. A server edited
-between two calls exposes its new tools on the second one, which makes the CLI a
-development loop with no reload command.
+With no daemon, every call connects, discovers, acts and disconnects. With a
+daemon, the connection is opened once and reused, and the call still discovers
+and acts. The protocol era is negotiated per connection either way, so legacy
+servers keep working alongside modern ones, and `mcp-cli info <server>` reports
+the era a server answered with. A server edited between two calls exposes its
+new tools on the second one in both modes, which makes the CLI a development
+loop with no reload command.
 
-`src/cli/server-session.ts` holds the one seam a warm daemon replaces. The
-daemon is deferred, and its design is written up in
-[docs/mcp-cli-daemon.md](docs/mcp-cli-daemon.md). The architecture pass behind
-the current module layout is in
+`src/cli/server-session.ts` holds the one seam, and the two adapters behind it
+are `EphemeralSessions` and `DaemonSessions`. The architecture pass behind the
+current module layout is in
 [docs/mcp-cli-architecture-pass.md](docs/mcp-cli-architecture-pass.md).
 
 ## Architecture
@@ -536,16 +581,23 @@ the current module layout is in
 │   ├── transport.ts  # Transport factory (stdio, SSE, HTTP) + TracingWrapper
 │   ├── session.ts    # SessionRegistry with GC (30-min TTL)
 │   ├── events.ts     # EventBuffer (ring buffer for notifications)
+│   ├── http-body.ts  # read a request body, shared by the two loopback surfaces
 │   ├── bridge/       # the host bridge
 │   │   ├── path-map.ts    # /workspace <-> C:\...gent-workspace, three rewrites
 │   │   ├── exec.ts        # run one command through cmd.exe, exit 124 on timeout
 │   │   ├── selftest.ts    # the six path-contract cases
 │   │   ├── http.ts        # POST /exec
 │   │   └── mcp-server.ts  # the host_exec tool over stdio
+│   ├── daemon/       # the mcp-cli warm daemon
+│   │   ├── registry.ts    # WarmServers: one live connection per server name
+│   │   ├── core.ts        # check, refuse, dispatch the seven operations
+│   │   └── http.ts        # POST /op, GET /status, POST /shutdown, loopback only
 │   └── cli/          # mcp-cli
 │       ├── index.ts          # command bodies
 │       ├── fleet.ts          # servers + profile; answers without connecting
-│       ├── server-session.ts # the seam: SessionProvider, ServerSession
+│       ├── server-session.ts # the seam, and the EphemeralSessions adapter
+│       ├── daemon-session.ts # DaemonSessions: the seam's second adapter
+│       ├── daemon.ts         # daemon start, stop, status, serve
 │       ├── output.ts         # text or JSON, one place that writes
 │       ├── errors.ts         # each failure carries its exit code
 │       ├── config.ts         # config file shape, ${ENV}, glob, profiles
@@ -582,6 +634,7 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+- Added `mcp-cli daemon`: an explicitly started, loopback-only daemon on port 8791 that keeps one live connection per server, so a stdio server keeps its own state between two calls. The tool list is never cached, and the profile blocklist is enforced in both processes. See [docs/mcp-cli-daemon.md](docs/mcp-cli-daemon.md)
 - Added `mcp-cli bridge`: a zero-auth host exec bridge with a `/workspace` path contract, served either as `POST /exec` over HTTP or as the `host_exec` MCP tool over stdio. See [docs/host-bridge.md](docs/host-bridge.md)
 - Added the `negotiation` connection parameter for client-side protocol-era negotiation (`legacy` / `auto` / pinned revision)
 - `insp_connect` and `insp_list_sessions` now report the negotiated protocol revision and era of each session
