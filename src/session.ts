@@ -177,7 +177,7 @@ export class SessionRegistry {
   /**
    * Establish a persistent connection to an MCP server
    */
-  async connect(config: TransportConfig): Promise<ConnectResult> {
+  async connect(config: TransportConfig, options?: { timeout?: number }): Promise<ConnectResult> {
     const id = generateSessionId();
     const eventBuffer = new EventBuffer(EVENT_BUFFER_SIZE);
 
@@ -198,8 +198,20 @@ export class SessionRegistry {
       });
     };
 
-    // Connect to the server
-    await client.connect(transport);
+    // Connect to the server. A failed connect closes the transport here: the
+    // registry is long-lived, and a stdio server that spawned but never
+    // finished its handshake would otherwise leave its child process behind
+    // with nothing holding a reference to it.
+    try {
+      await client.connect(transport, options);
+    } catch (err) {
+      try {
+        await transport.close();
+      } catch {
+        // A transport that never started cannot be closed; nothing to report.
+      }
+      throw err;
+    }
     // Get server info from the connection
     const serverInfo = client.getServerVersion();
     const capabilities = client.getServerCapabilities();
