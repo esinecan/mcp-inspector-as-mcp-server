@@ -12,6 +12,7 @@
  */
 
 import { createServer, type Server as HttpServer } from "http";
+import { readBody } from "../http-body.js";
 import { execBridged, bridgeErrorMessage, type ExecOptions } from "./exec.js";
 
 export interface BridgeHttpOptions extends ExecOptions {
@@ -21,28 +22,6 @@ export interface BridgeHttpOptions extends ExecOptions {
 
 /** The largest request body the bridge accepts, in bytes. */
 const MAX_BODY = 4 * 1024 * 1024;
-
-function readBody(stream: NodeJS.ReadableStream, onDone: (body: string | null) => void): void {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  let ended = false;
-  const done = (body: string | null): void => {
-    if (ended) return;
-    ended = true;
-    onDone(body);
-  };
-  stream.on("data", (c: Buffer) => {
-    size += c.length;
-    if (size > MAX_BODY) {
-      done(null);
-      return;
-    }
-    chunks.push(c);
-  });
-  // A client that disconnects mid-body must not take the server with it.
-  stream.on("error", () => done(null));
-  stream.on("end", () => done(Buffer.concat(chunks).toString("utf8")));
-}
 
 /** Build the HTTP server. The caller decides when and where it listens. */
 export function createBridgeHttpServer(options: BridgeHttpOptions): HttpServer {
@@ -68,7 +47,9 @@ export function createBridgeHttpServer(options: BridgeHttpOptions): HttpServer {
       return;
     }
 
-    readBody(req, (raw) => {
+    // A client that disconnects mid-body must not take the server with it;
+    // `readBody` reports that the same way it reports an over-size body.
+    readBody(req, MAX_BODY, (raw) => {
       if (raw === null) {
         send(413, { error: "request body too large, or the client disconnected" }, "body");
         return;
