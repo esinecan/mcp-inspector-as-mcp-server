@@ -33,6 +33,8 @@ import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
 import { Output, columnWidth, firstLine, oneLine, renderContent } from "./output.js";
 import { cmdBridge } from "./bridge.js";
+import { cmdDaemon, daemonEnabled, daemonSettings } from "./daemon.js";
+import { DaemonSessions } from "./daemon-session.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -50,6 +52,7 @@ Usage:
   mcp-cli prompt <server.name> [args]      get one prompt
   mcp-cli import-claude                    build the config from ~/.claude.json
   mcp-cli bridge <serve|mcp|selftest|exec> run host commands over the path contract
+  mcp-cli daemon <start|stop|status|serve> keep server connections warm between calls
 
 Arguments for call and prompt are JSON, given as inline text, as "-" to read
 stdin, or as "@path" to read a file.
@@ -61,10 +64,15 @@ Global flags:
   --timeout <ms>    budget for connecting and for each request
   --all             with "tools", also show blocked tools, marked
   --port, --bind    with "bridge serve", the listening socket
+  --port            with "daemon", its port (env MCP_CLI_DAEMON_PORT, default 8791)
   --cwd, --stdin    with "bridge exec", the working directory and standard input
   --help, --version
 
-Exit codes: 0 success, 1 failure, 2 usage error, 3 tool blocked by the profile.`;
+Exit codes: 0 success, 1 failure, 2 usage error, 3 tool blocked by the profile.
+
+With a daemon running, every call reuses one warm connection per server, so a
+stdio server keeps its own state between two calls. MCP_CLI_DAEMON=0 turns that
+off for one run.`;
 
 /**
  * Run one command and return its exit code. Exported so a test can drive the
@@ -93,6 +101,8 @@ export async function main(argv: string[]): Promise<number> {
     switch (args.command) {
       case "bridge":
         return await cmdBridge(args);
+      case "daemon":
+        return await cmdDaemon(args);
       case "import-claude":
         return cmdImportClaude(args);
       case "servers":
@@ -132,13 +142,33 @@ interface Context {
   out: Output;
 }
 
+/**
+ * The one place the two session adapters are chosen between.
+ *
+ * `EphemeralSessions` is always built, because it is also what the daemon
+ * adapter falls back to when nothing answers on the daemon port. Which one
+ * actually runs is settled by the first request of each run, not here: there is
+ * no synchronous way to ask whether a TCP port is listening, and a refused
+ * connection has to mean "no daemon" rather than "failure".
+ */
 function context(args: ParsedArgs): Context {
   const fleet = loadFleet({ config: args.config, profile: args.profile });
-  return {
-    fleet,
-    sessions: new EphemeralSessions(fleet, { timeoutMs: args.timeoutMs }),
-    out: new Output(args.json),
-  };
+  const ephemeral = new EphemeralSessions(fleet, { timeoutMs: args.timeoutMs });
+  let sessions: SessionProvider = ephemeral;
+
+  if (daemonEnabled()) {
+    const settings = daemonSettings(args);
+    sessions = new DaemonSessions({
+      host: settings.host,
+      port: settings.port,
+      configPath: settings.configPath,
+      profile: fleet.profile.name,
+      timeoutMs: args.timeoutMs,
+      fallback: ephemeral,
+    });
+  }
+
+  return { fleet, sessions, out: new Output(args.json) };
 }
 
 /** The one positional a command requires, or a usage error naming what it is. */
