@@ -328,7 +328,12 @@ function cmdSpill(args: ParsedArgs): number {
   const fleet = loadFleet({ config: args.config, profile: args.profile });
   const settings = pruningSettings(fleet.config);
   const out = new Output(args.json);
-  return runSpillCommand(args.positionals, fileSpillStore(settings.spillDir), out);
+  // `parseArgs` consumes `--older-than` wherever it stands, so it is handed
+  // back here; `runSpillCommand` keeps reading it too, for a caller who
+  // escapes the whole subcommand behind `--`.
+  const argv = [...args.positionals];
+  if (args.olderThan !== undefined) argv.push("--older-than", String(args.olderThan));
+  return runSpillCommand(argv, fileSpillStore(settings.spillDir), out);
 }
 
 /** Raise when the profile blocks this exact address. */

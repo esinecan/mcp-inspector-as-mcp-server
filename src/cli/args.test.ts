@@ -87,6 +87,16 @@ describe("the pruning flags", () => {
   it("keeps an --intent that is empty only when written with an equals sign", () => {
     expect(() => parseArgs(["call", "--intent"])).toThrow(/needs a value/);
   });
+
+  it("takes --older-than with a space and with an equals sign", () => {
+    expect(parseArgs(["spill", "prune", "--older-than", "7"]).olderThan).toBe(7);
+    expect(parseArgs(["spill", "prune", "--older-than=7"]).olderThan).toBe(7);
+  });
+
+  it("rejects an --older-than that is not a number of days", () => {
+    expect(() => parseArgs(["spill", "prune", "--older-than", "soon"])).toThrow(UsageError);
+    expect(() => parseArgs(["spill", "prune", "--older-than", "-1"])).toThrow(/--older-than/);
+  });
 });
 
 describe("the bridge flags", () => {

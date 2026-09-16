@@ -36,6 +36,8 @@ export interface ParsedArgs {
   format?: "raw" | "compact" | "table";
   /** `--intent`, a query that narrows a stored result to what it asked for. */
   intent?: string;
+  /** `--older-than`, the age in days beyond which `spill prune` deletes. */
+  olderThan?: number;
 }
 
 /** The values `--format` accepts, shared with the config file's pruning block. */
@@ -55,6 +57,7 @@ const VALUE_FLAGS = new Set([
   "--stdin",
   "--format",
   "--intent",
+  "--older-than",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -173,5 +176,13 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
     case "--intent":
       parsed.intent = value;
       return;
+    case "--older-than": {
+      const days = Number(value);
+      if (!Number.isFinite(days) || days < 0) {
+        throw new UsageError(`--older-than needs a number of days, got "${value}"`);
+      }
+      parsed.olderThan = days;
+      return;
+    }
   }
 }

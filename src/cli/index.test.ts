@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, utimesSync, existsSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { main } from "./index.js";
@@ -34,6 +34,10 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 function run(...argv: string[]) {
+  return runWith(configFile, ...argv);
+}
+
+function runWith(config: string, ...argv: string[]) {
   const out: string[] = [];
   const err: string[] = [];
   const outSpy = vi.spyOn(process.stdout, "write").mockImplementation((c) => {
@@ -44,7 +48,7 @@ function run(...argv: string[]) {
     err.push(String(c));
     return true;
   });
-  return main([...argv, "--config", configFile])
+  return main([...argv, "--config", config])
     .then((code) => ({ code, out: out.join(""), err: err.join("") }))
     .finally(() => {
       outSpy.mockRestore();
@@ -139,5 +143,50 @@ describe("help and version", () => {
     const r = await run("--help");
     expect(r.code).toBe(0);
     expect(r.out).toContain("mcp-cli import-claude");
+  });
+});
+
+describe("spill", () => {
+  let spillDir: string;
+  let spillConfig: string;
+
+  beforeAll(() => {
+    spillDir = join(dir, "spill");
+    spillConfig = join(dir, "mcp-cli-spill.json");
+    writeFileSync(
+      spillConfig,
+      JSON.stringify({
+        mcpServers: { forum: { command: "node", args: ["forum.js"] } },
+        pruning: { spillDir },
+      }),
+    );
+  });
+
+  it("accepts the documented prune form, --older-than <days>", async () => {
+    const r = await runWith(spillConfig, "spill", "prune", "--older-than", "7");
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("pruned 0 entries\n");
+  });
+
+  it("still accepts the bare-number prune form", async () => {
+    const r = await runWith(spillConfig, "spill", "prune", "7");
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("pruned 0 entries\n");
+  });
+
+  it("deletes only the stored entries past the bound", async () => {
+    mkdirSync(spillDir, { recursive: true });
+    const fresh = join(spillDir, `${"a".repeat(64)}.txt`);
+    const stale = join(spillDir, `${"b".repeat(64)}.txt`);
+    writeFileSync(fresh, "fresh entry", "utf8");
+    writeFileSync(stale, "stale entry", "utf8");
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    utimesSync(stale, old, old);
+
+    const r = await runWith(spillConfig, "spill", "prune", "--older-than", "7");
+    expect(r.code).toBe(0);
+    expect(r.out).toBe("pruned 1 entry\n");
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(stale)).toBe(false);
   });
 });

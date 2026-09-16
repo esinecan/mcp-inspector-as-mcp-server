@@ -162,9 +162,10 @@ export function runSpillCommand(argv: string[], store: SpillStore, out: Output):
   }
 
   if (sub === "prune") {
-    // `--older-than` is accepted both as a flag and as a bare number, because
-    // a caller who quotes the whole subcommand behind `--` hands over the
-    // flag form while the plain form stays the shortest thing to type.
+    // `--older-than` is read both as a parsed flag and as a bare number:
+    // `main` hands the parsed value back as a flag, while a caller who escapes
+    // the whole subcommand behind `--` delivers it here for this loop to read,
+    // and the bare number stays the shortest thing to type.
     let value: string | undefined;
     const i = argv.indexOf("--older-than");
     if (i !== -1) value = argv[i + 1];
