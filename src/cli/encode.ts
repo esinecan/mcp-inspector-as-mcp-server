@@ -25,6 +25,22 @@ export interface EncodeEnv {
   store: SpillStore;
 }
 
+/**
+ * One text the "sample" format handed back with items withheld: the sampled
+ * text `renderContent` prints, beside the lossless encoding it was cut from
+ * and the digest under which the store holds that whole encoding. The
+ * addressability of the omitted items runs through this, because the caller
+ * prints the sampled text while the spill it must stay able to name is the
+ * lossless one.
+ */
+export interface SampledText {
+  text: string;
+  /** The whole lossless encoding the sampled text was cut from. */
+  lossless: string;
+  /** The digest `store.put` returned for `lossless`. */
+  digest: string;
+}
+
 /** A value as a table cell: JSON for compounds, String for the rest. */
 function cell(value: unknown): string {
   return value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -91,13 +107,20 @@ function toTable(rows: Array<Record<string, unknown>>): string {
  * answer, not a formatting choice, so it comes back unchanged under every
  * format. Every rewrite is noted with the flag that undoes it, so the original
  * stays one `--format raw` away.
+ *
+ * Under "sample" a text whose items were withheld comes back as a
+ * {@link SampledText}, so the caller can keep the lossless encoding and its
+ * digest addressable; under every other outcome the text alone is the answer,
+ * so a plain string is returned and existing callers are unchanged.
  */
+export function reencode(text: string, format: "raw" | "compact" | "table", note: (m: string) => void, env: EncodeEnv): string;
+export function reencode(text: string, format: Format, note: (m: string) => void, env: EncodeEnv): string | SampledText;
 export function reencode(
   text: string,
   format: Format,
   note: (m: string) => void,
   env: EncodeEnv,
-): string {
+): string | SampledText {
   if (format === "raw") return text;
   let parsed: unknown;
   try {
@@ -127,8 +150,9 @@ export function reencode(
     // The lossless encoding is exactly what "table" prints, and sampling keeps
     // or withholds whole items of it; two lines of a Markdown table, the header
     // row and the separator, are not items.
+    const lossless = toTable(rows);
     const sampled = sampleText(
-      { text: toTable(rows), items: rows, fixedLines: 2 },
+      { text: lossless, items: rows, fixedLines: 2 },
       { thresholdBytes: env.thresholdBytes },
       env.store,
     );
@@ -141,7 +165,9 @@ export function reencode(
     } else {
       note("text re-encoded as a table; --format raw returns the original");
     }
-    return sampled.text;
+    return sampled.withheld > 0 && sampled.digest !== undefined
+      ? { text: sampled.text, lossless, digest: sampled.digest }
+      : sampled.text;
   }
   const compact = JSON.stringify(parsed);
   if (compact === text) return text;

@@ -486,6 +486,11 @@ whole table is printed and the note on stderr says so. When even the minimum
 keep-set is over the threshold, the prune that runs after adds its own byte
 handle; each handle names the digest of exactly what its own spill entry holds.
 
+`--intent` over a sampled result searches the whole lossless table, not the
+sampled head, so a query that names only a withheld row still finds it. The
+answer carries no handle line — the flag replaces the command it would print —
+so the digest of the sampled table is noted on stderr instead.
+
 ### bridge
 
 `mcp-cli bridge` runs commands in a Windows `cmd.exe` shell for a client that

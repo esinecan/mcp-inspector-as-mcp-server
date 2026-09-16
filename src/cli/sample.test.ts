@@ -458,8 +458,8 @@ function items(count: number, distinct = 1, pad = 60): Array<Record<string, unkn
 /** Re-encode one text under "sample" at one budget, collecting the notes. */
 function sample(text: string, thresholdBytes: number, store: SpillStore) {
   const notes: string[] = [];
-  const out = reencode(text, "sample", (m) => notes.push(m), { thresholdBytes, store });
-  return { out, notes };
+  const encoded = reencode(text, "sample", (m) => notes.push(m), { thresholdBytes, store });
+  return { out: typeof encoded === "string" ? encoded : encoded.text, notes };
 }
 
 describe("the refusal boundaries", () => {
@@ -869,7 +869,7 @@ describe("the surfaces around sample", () => {
     expect(FORMATS).toContain("sample");
   });
 
-  it("narrows a sampled result with --intent to verbatim slices of the sampled text", () => {
+  it("narrows a sampled result with --intent to verbatim slices of the lossless text", () => {
     const { store, puts, digests } = recordingStore();
     const rows = items(20);
     const notes: string[] = [];
@@ -885,27 +885,81 @@ describe("the surfaces around sample", () => {
         intentBudget: 2000,
       },
     );
-    // The intent searches the text the render produced — the sampled table with
-    // its handle — so the last record it asked for is a line of that text, the
-    // handle naming the lossless spill is still in front of the caller, and the
-    // spill holds every withheld item.
-    expect(notes).toEqual(["sample kept 9 of 20 items; --format raw returns the original"]);
-    expect(rendered).toContain("| 0 | uid-19 | 19 xxx");
-    expect(rendered).toContain(`... 11 of 20 items withheld. mcp-cli spill get ${digests[0]}`);
-    expect(puts).toEqual([encoding(rows).text]);
-    expect(puts[0]).toContain("| 0 | uid-16 | 16 xxx");
-    expect(store.get(digests[0])).toBe(encoding(rows).text);
-    // Everything but the marker lines the intent adds is a line the render
-    // produced — a lossless item line or the sample's own handle — so no byte
-    // of the answer is a byte the render did not produce.
-    const sampledLines = new Set([
-      ...encoding(rows).text.split("\n"),
-      `... 11 of 20 items withheld. mcp-cli spill get ${digests[0]}`,
+    // The intent searches the lossless table — the very text the spill holds —
+    // never the sampled head, so the last record it asked for is found whole
+    // even though the sample withheld it, and the digest reaches the caller on
+    // the note sink because the answer itself carries no handle line.
+    expect(notes).toEqual([
+      "sample kept 9 of 20 items; --format raw returns the original",
+      `--intent narrowed a sampled result; mcp-cli spill get ${digests[0]} reads the whole table`,
     ]);
+    expect(rendered).toContain("| 0 | uid-19 | 19 xxx");
+    expect(puts).toEqual([encoding(rows).text]);
+    expect(store.get(digests[0])).toBe(encoding(rows).text);
+    // Everything but the marker lines the intent adds is a line of the lossless
+    // encoding, so no byte of the answer is a byte the render did not produce.
+    const losslessLines = new Set(encoding(rows).text.split("\n"));
     for (const line of rendered.split("\n")) {
       if (/^\[\d+ chunks? skipped\]$/.test(line)) continue;
-      expect(sampledLines.has(line), line).toBe(true);
+      expect(losslessLines.has(line), line).toBe(true);
     }
+  });
+});
+
+describe("--intent over a sampled result", () => {
+  /** Render options over the reviewer's twenty rows, on a recording store. */
+  function intentOpts(store: SpillStore, thresholdBytes: number, intent: string) {
+    const notes: string[] = [];
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      signal: i % 2,
+      uid: `uid-${i}`,
+      pad: `${i === 17 ? "zzq " : ""}${"p".repeat(400)}`,
+    }));
+    return {
+      notes,
+      result: { content: [{ type: "text", text: JSON.stringify({ hits: rows }) }] },
+      opts: {
+        describeBlocks: true,
+        format: "sample" as const,
+        prune: { thresholdBytes, headBytes: 2000 },
+        store,
+        note: (m: string) => notes.push(m),
+        intent,
+        intentBudget: 50000,
+      },
+    };
+  }
+
+  it("puts a digest in front of the caller, on the note sink", () => {
+    const { store, puts, digests } = recordingStore();
+    const { result, opts, notes } = intentOpts(store, 8000, "zzq");
+    const rendered = renderContent(result, opts);
+    expect(puts).toHaveLength(1);
+    expect(store.get(digests[0])).toBe(puts[0]);
+    const carrier = [...rendered.split("\n"), ...notes].join("\n");
+    expect(carrier).toContain(`mcp-cli spill get ${digests[0]}`);
+    expect(notes.join("\n")).toContain(
+      `--intent narrowed a sampled result; mcp-cli spill get ${digests[0]} reads the whole table`,
+    );
+  });
+
+  it("finds an intent that matches only a withheld row", () => {
+    const { store } = recordingStore();
+    // Item 17 sits in the withheld middle: the sample keeps six head and three
+    // tail items of twenty, so items 6 through 16 are gone from the head.
+    const { result, opts } = intentOpts(store, 8000, "zzq");
+    const rendered = renderContent(result, opts);
+    expect(rendered).toContain("zzq");
+    expect(rendered).not.toContain("matched none of the");
+  });
+
+  it("answers from the lossless text unchanged when no items were withheld", () => {
+    const { store, puts } = recordingStore();
+    const { result, opts, notes } = intentOpts(store, 1_000_000, "zzq");
+    const rendered = renderContent(result, opts);
+    expect(puts).toEqual([]);
+    expect(notes).toEqual(["text re-encoded as a table; --format raw returns the original"]);
+    expect(rendered).toContain("| 1 | uid-17 | zzq ppp");
   });
 });
 

@@ -144,6 +144,12 @@ describe("help and version", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("mcp-cli import-claude");
   });
+
+  it("lists the four formats the --format flag accepts, in the text a caller reads", async () => {
+    const r = await run("--help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("--format <raw|compact|table|sample>");
+  });
 });
 
 describe("spill", () => {

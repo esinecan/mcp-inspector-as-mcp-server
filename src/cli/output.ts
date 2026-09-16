@@ -88,9 +88,12 @@ export interface RenderOptions {
 /**
  * Render an MCP result's content blocks as plain text.
  *
- * An `--intent` narrows the whole rendered text — the text pruning spills in
- * full, not the head it prints — and the answer carries no handle line, because
- * the handle's command is what this flag replaces.
+ * An `--intent` narrows the whole rendered text — every text the render could
+ * have printed, the lossless encodings whose items a sample withheld as much
+ * as the sampled heads — and the answer carries no handle line, because the
+ * handle's command is what this flag replaces. The digest of anything the
+ * render spilled is noted instead, so the omission stays addressable even
+ * though the flag's whole purpose is to answer with less than the whole text.
  */
 export function renderContent(result: unknown, opts?: RenderOptions): string {
   const r = result as {
@@ -98,30 +101,51 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
     structuredContent?: unknown;
   };
   if (Array.isArray(r.content) && r.content.length > 0) {
-    const joined = r.content
-      .map((block) =>
-        block.type === "text" && typeof block.text === "string"
-          ? opts
-            ? reencode(block.text, opts.format, opts.note, {
-                thresholdBytes: opts.prune.thresholdBytes,
-                store: opts.store,
-              })
-            : block.text
-          : opts?.describeBlocks
-            ? describeBlock(block)
-            : JSON.stringify(block),
-      )
-      .join("\n");
+    const printed: string[] = [];
+    const widest: string[] = [];
+    const sampled: string[] = [];
+    for (const block of r.content) {
+      if (block.type === "text" && typeof block.text === "string") {
+        if (!opts) {
+          printed.push(block.text);
+          continue;
+        }
+        const encoded = reencode(block.text, opts.format, opts.note, {
+          thresholdBytes: opts.prune.thresholdBytes,
+          store: opts.store,
+        });
+        if (typeof encoded === "string") {
+          printed.push(encoded);
+          widest.push(encoded);
+          continue;
+        }
+        printed.push(encoded.text);
+        // A sample that withheld items printed fewer than the whole encoding,
+        // so the intent searches the whole encoding, the one the spill holds:
+        // the withheld rows must stay findable, which the printed head alone
+        // cannot do.
+        widest.push(encoded.lossless);
+        sampled.push(encoded.digest);
+        continue;
+      }
+      const described = opts?.describeBlocks ? describeBlock(block) : JSON.stringify(block);
+      printed.push(described);
+      widest.push(described);
+    }
+    const joined = printed.join("\n");
     if (!opts) return joined;
     const pruned = pruneText(joined, opts.prune, opts.store);
     if (opts.intent === undefined) return pruned.text;
-    // The intent searches the whole rendered text — the very text the store
-    // holds — never the head, so the withheld bytes stay reachable through it
-    // and the handle line can never pass for one more chunk of the answer.
+    // The answer the intent returns carries no handle line, so every digest
+    // the render created is noted instead: the addressability the handles
+    // carried has to survive the narrowing, on the note sink.
     if (pruned.digest !== undefined) {
       opts.note(`--intent narrowed a spilled result; mcp-cli spill get ${pruned.digest} reads it whole`);
     }
-    return searchStored(joined, opts.intent, {
+    for (const digest of sampled) {
+      opts.note(`--intent narrowed a sampled result; mcp-cli spill get ${digest} reads the whole table`);
+    }
+    return searchStored(widest.join("\n"), opts.intent, {
       budgetBytes: opts.intentBudget ?? DEFAULT_PRUNING.intentBudget,
     }).text;
   }
