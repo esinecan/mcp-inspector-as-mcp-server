@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { reencode } from "./encode.js";
+import { reencode, type EncodeEnv } from "./encode.js";
+import { NO_SPILL } from "./spill.js";
 
 const FIXTURE = join(__dirname, "__fixtures__", "memory-search-result.json");
 /** The committed captured result's text block, the payload every size claim runs on. */
@@ -17,19 +18,24 @@ function sink(): { notes: string[]; note: (m: string) => void } {
   return { notes, note: (m: string) => void notes.push(m) };
 }
 
+/** The store and budget every non-sample format ignores, and sample reads. */
+function env(thresholdBytes = 8000): EncodeEnv {
+  return { thresholdBytes, store: NO_SPILL };
+}
+
 /** A non-JSON text the length of a real listing, which must survive every format. */
 const NON_JSON = `cortex.task_list failed after 3 attempts.\n${"The server closed the stream. ".repeat(1000)}\n`;
 
 describe("reencode with format raw", () => {
   it("returns the fixture text byte for byte and notes nothing", () => {
     const s = sink();
-    expect(reencode(FIXTURE_TEXT, "raw", s.note)).toBe(FIXTURE_TEXT);
+    expect(reencode(FIXTURE_TEXT, "raw", s.note, env())).toBe(FIXTURE_TEXT);
     expect(s.notes).toEqual([]);
   });
 
   it("returns non-JSON text byte for byte and notes nothing", () => {
     const s = sink();
-    expect(reencode(NON_JSON, "raw", s.note)).toBe(NON_JSON);
+    expect(reencode(NON_JSON, "raw", s.note, env())).toBe(NON_JSON);
     expect(s.notes).toEqual([]);
   });
 });
@@ -37,8 +43,8 @@ describe("reencode with format raw", () => {
 describe("reencode with non-JSON text", () => {
   it("returns it unchanged under every format", () => {
     const s = sink();
-    for (const format of ["raw", "compact", "table"] as const) {
-      expect(reencode(NON_JSON, format, s.note)).toBe(NON_JSON);
+    for (const format of ["raw", "compact", "table", "sample"] as const) {
+      expect(reencode(NON_JSON, format, s.note, env())).toBe(NON_JSON);
     }
     expect(s.notes).toEqual([]);
   });
@@ -46,8 +52,8 @@ describe("reencode with non-JSON text", () => {
   it("returns a JSON prefix with a prose tail unchanged under every format", () => {
     const s = sink();
     const text = '{"ok": true}\nThat is all I know.\n';
-    for (const format of ["raw", "compact", "table"] as const) {
-      expect(reencode(text, format, s.note)).toBe(text);
+    for (const format of ["raw", "compact", "table", "sample"] as const) {
+      expect(reencode(text, format, s.note, env())).toBe(text);
     }
     expect(s.notes).toEqual([]);
   });
@@ -56,25 +62,25 @@ describe("reencode with non-JSON text", () => {
 describe("reencode with format compact", () => {
   it("prints the parsed payload with no indent", () => {
     const s = sink();
-    expect(reencode('{\n  "a": 1\n}\n', "compact", s.note)).toBe('{"a":1}');
+    expect(reencode('{\n  "a": 1\n}\n', "compact", s.note, env())).toBe('{"a":1}');
   });
 
   it("emits fewer characters than the fixture text, both counts in the message", () => {
     const s = sink();
-    const out = reencode(FIXTURE_TEXT, "compact", s.note);
+    const out = reencode(FIXTURE_TEXT, "compact", s.note, env());
     const message = `fixture ${FIXTURE_TEXT.length} chars, compact ${out.length} chars`;
     expect(out.length, message).toBeLessThan(FIXTURE_TEXT.length);
   });
 
   it("notes the flag that returns the original when it rewrites", () => {
     const s = sink();
-    reencode(FIXTURE_TEXT, "compact", s.note);
+    reencode(FIXTURE_TEXT, "compact", s.note, env());
     expect(s.notes).toEqual(["text re-encoded as compact JSON; --format raw returns the original"]);
   });
 
   it("notes nothing when the text already is that compact JSON", () => {
     const s = sink();
-    expect(reencode('{"a":1}', "compact", s.note)).toBe('{"a":1}');
+    expect(reencode('{"a":1}', "compact", s.note, env())).toBe('{"a":1}');
     expect(s.notes).toEqual([]);
   });
 });
@@ -82,7 +88,7 @@ describe("reencode with format compact", () => {
 describe("reencode with format table", () => {
   it("renders the fixture hits as a Markdown table", () => {
     const s = sink();
-    const out = reencode(FIXTURE_TEXT, "table", s.note);
+    const out = reencode(FIXTURE_TEXT, "table", s.note, env());
     expect(out.split("\n")[0]).toBe(
       "| name | partition | chapter | description | pinned | score | path |",
     );
@@ -92,8 +98,8 @@ describe("reencode with format table", () => {
 
   it("emits fewer characters than compact over the fixture, both counts in the message", () => {
     const s = sink();
-    const compact = reencode(FIXTURE_TEXT, "compact", s.note);
-    const table = reencode(FIXTURE_TEXT, "table", s.note);
+    const compact = reencode(FIXTURE_TEXT, "compact", s.note, env());
+    const table = reencode(FIXTURE_TEXT, "table", s.note, env());
     const message = `compact ${compact.length} chars, table ${table.length} chars`;
     expect(table.length, message).toBeLessThan(compact.length);
   });
@@ -104,24 +110,30 @@ describe("reencode with format table", () => {
       { a: 1, b: 2 },
       { a: 3, c: 4 },
     ];
-    expect(reencode(JSON.stringify(rows, null, 2), "table", s.note)).toBe(JSON.stringify(rows));
+    expect(reencode(JSON.stringify(rows, null, 2), "table", s.note, env())).toBe(
+      JSON.stringify(rows),
+    );
   });
 
   it("falls back to compact when a value contains a newline", () => {
     const s = sink();
     const rows = [{ a: "one\ntwo" }, { a: "x" }];
-    expect(reencode(JSON.stringify(rows, null, 2), "table", s.note)).toBe(JSON.stringify(rows));
+    expect(reencode(JSON.stringify(rows, null, 2), "table", s.note, env())).toBe(
+      JSON.stringify(rows),
+    );
   });
 
   it("falls back to compact when a value contains a pipe", () => {
     const s = sink();
     const rows = [{ a: "x|y" }, { a: "z" }];
-    expect(reencode(JSON.stringify(rows, null, 2), "table", s.note)).toBe(JSON.stringify(rows));
+    expect(reencode(JSON.stringify(rows, null, 2), "table", s.note, env())).toBe(
+      JSON.stringify(rows),
+    );
   });
 
   it("says on the note sink that it fell back to compact", () => {
     const s = sink();
-    reencode(JSON.stringify({ a: 1 }, null, 2), "table", s.note);
+    reencode(JSON.stringify({ a: 1 }, null, 2), "table", s.note, env());
     expect(s.notes).toEqual([
       "table needs one uniform array of objects, so compact JSON was used; --format raw returns the original",
     ]);
@@ -130,10 +142,55 @@ describe("reencode with format table", () => {
   it('keeps the string "NO" a string in both compact and table', () => {
     const row = [{ v: "NO" }];
     const text = JSON.stringify(row, null, 2);
-    const compact = reencode(text, "compact", sink().note);
+    const compact = reencode(text, "compact", sink().note, env());
     expect(compact).toBe(JSON.stringify(row));
     expect(compact).toContain('"NO"');
-    const table = reencode(text, "table", sink().note);
+    const table = reencode(text, "table", sink().note, env());
     expect(table.split("\n")[2]).toBe("| NO |");
+  });
+});
+
+describe("reencode with format sample, lossless first", () => {
+  it("returns the fixture table whole under a budget it fits in, and notes the table", () => {
+    const s = sink();
+    const table = reencode(FIXTURE_TEXT, "table", sink().note, env());
+    expect(reencode(FIXTURE_TEXT, "sample", s.note, env())).toBe(table);
+    expect(s.notes).toEqual(["text re-encoded as a table; --format raw returns the original"]);
+  });
+
+  it("returns the same table again when a budget over the capture samples a smaller payload", () => {
+    const s = sink();
+    const rows = Array.from({ length: 6 }, (_, i) => ({ kind: i % 2, seq: i }));
+    const text = JSON.stringify({ hits: rows }, null, 2);
+    const table = reencode(JSON.stringify({ hits: rows }), "table", sink().note, env());
+    expect(reencode(text, "sample", s.note, env())).toBe(table);
+  });
+
+  it("says on the note sink when sampling is refused, and returns the table whole", () => {
+    const s = sink();
+    // Four records is too few to have a pattern, and the wide pad puts the
+    // rendered table over the budget, so the refusal is the outcome, not size.
+    const rows = Array.from({ length: 4 }, (_, i) => ({
+      kind: "same",
+      seq: i,
+      pad: "x".repeat(200),
+    }));
+    const text = JSON.stringify({ hits: rows }, null, 2);
+    const table = reencode(JSON.stringify({ hits: rows }), "table", sink().note, env());
+    expect(reencode(text, "sample", s.note, env(500))).toBe(table);
+    expect(s.notes).toEqual([
+      "sample refused: 4 items is too few to have a pattern; --format raw returns the original",
+    ]);
+  });
+
+  it("falls back to compact when there is no uniform array to sample, and says so", () => {
+    const s = sink();
+    const payload = { a: 1, b: "two" };
+    expect(reencode(JSON.stringify(payload, null, 2), "sample", s.note, env())).toBe(
+      JSON.stringify(payload),
+    );
+    expect(s.notes).toEqual([
+      "sample needs one uniform array of objects to sample, so compact JSON was used; --format raw returns the original",
+    ]);
   });
 });

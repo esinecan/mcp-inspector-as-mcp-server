@@ -457,6 +457,35 @@ Git Bash is the documented shell on Windows. PowerShell rewrites inline JSON
 before the process sees it, and single quotes do not protect it. In PowerShell,
 use the `-` form or the `@path` form instead.
 
+### format
+
+`--format <raw|compact|table|sample>`, with `call`, says how a text result is
+re-encoded before it is printed. `raw` is the text as it came. `compact` and
+`table` re-serialise a JSON payload, as compact JSON or as a Markdown table.
+Text that does not parse as JSON is a server's own answer and comes back
+unchanged under every format.
+
+`sample` is the one format that emits fewer items rather than fewer bytes per
+item. It renders the lossless table first and hands it back whole when it fits
+under `pruning.thresholdBytes`. When it does not, and the array holds at least
+five items with a field that repeats in nine of every ten, a run from the start
+and a run from the end stay inline and one handle line sits between them:
+
+```
+| name | partition | ... |
+| --- | --- | ... |
+| okf-open-knowledge-format | eren | ... |
+... 12 of 20 items withheld. mcp-cli spill get a1b2c3d4...
+| zod-schema-checks | eren | ... |
+```
+
+`mcp-cli spill get <digest>` returns the whole table byte for byte. Every kept
+line is a line of the lossless table, in its original order. When there is no
+repeated field to sample on, or fewer than five items, sampling is refused, the
+whole table is printed and the note on stderr says so. When even the minimum
+keep-set is over the threshold, the prune that runs after adds its own byte
+handle; each handle names the digest of exactly what its own spill entry holds.
+
 ### bridge
 
 `mcp-cli bridge` runs commands in a Windows `cmd.exe` shell for a client that

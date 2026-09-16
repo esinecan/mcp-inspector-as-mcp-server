@@ -71,7 +71,7 @@ Global flags:
   --json            one JSON object on stdout instead of text
   --timeout <ms>    budget for connecting and for each request
   --all             with "tools", also show blocked tools, marked
-  --format <raw|compact|table>  how a text result is re-encoded, with "call"
+  --format <raw|compact|table|sample>  how a text result is re-encoded, with "call"
   --intent <text>   narrow a stored result to what it asked for, with "call"
   --port, --bind    with "bridge serve", the listening socket
   --port            with "daemon", its port (env MCP_CLI_DAEMON_PORT, default 8791)

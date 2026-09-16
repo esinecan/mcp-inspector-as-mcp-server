@@ -64,13 +64,13 @@ describe("the pruning flags", () => {
     expect(parseArgs(["call", "--format=compact", "a.b", "{}"]).format).toBe("compact");
   });
 
-  it("accepts each of the three format names", () => {
-    for (const f of ["raw", "compact", "table"] as const) {
+  it("accepts each of the four format names", () => {
+    for (const f of ["raw", "compact", "table", "sample"] as const) {
       expect(parseArgs(["--format", f]).format).toBe(f);
     }
   });
 
-  it("rejects a --format value that is not one of the three names", () => {
+  it("rejects a --format value that is not one of the four names", () => {
     expect(() => parseArgs(["call", "--format", "yaml"])).toThrow(UsageError);
     expect(() => parseArgs(["call", "--format=yaml"])).toThrow(/--format/);
   });

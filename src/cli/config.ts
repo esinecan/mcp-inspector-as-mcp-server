@@ -73,7 +73,7 @@ export interface PruningEntry {
   /** Whether a non-text content block becomes a one-line descriptor. */
   describeBlocks?: boolean;
   /** The default re-encoding, overridden by `--format`. */
-  format?: "raw" | "compact" | "table";
+  format?: "raw" | "compact" | "table" | "sample";
 }
 
 /** A pruning block with every default filled in. */
@@ -83,7 +83,7 @@ export interface PruningSettings {
   spillDir: string;
   intentBudget: number;
   describeBlocks: boolean;
-  format: "raw" | "compact" | "table";
+  format: "raw" | "compact" | "table" | "sample";
 }
 
 export interface CliConfig {

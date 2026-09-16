@@ -33,7 +33,7 @@ export interface ParsedArgs {
    */
   timeoutSeconds?: number;
   /** `--format`, how a text result is re-encoded before it is printed. */
-  format?: "raw" | "compact" | "table";
+  format?: "raw" | "compact" | "table" | "sample";
   /** `--intent`, a query that narrows a stored result to what it asked for. */
   intent?: string;
   /** `--older-than`, the age in days beyond which `spill prune` deletes. */
@@ -41,7 +41,7 @@ export interface ParsedArgs {
 }
 
 /** The values `--format` accepts, shared with the config file's pruning block. */
-export const FORMATS = ["raw", "compact", "table"] as const;
+export const FORMATS = ["raw", "compact", "table", "sample"] as const;
 
 export { UsageError, UnknownServerError } from "./errors.js";
 

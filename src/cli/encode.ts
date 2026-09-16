@@ -4,11 +4,26 @@
  * `renderContent` calls this on each text block, with the format from
  * `--format` or the config's `pruning.format`. A tool that answers with JSON
  * inside a text block can then be read as compact JSON or as a table without
- * the caller re-parsing it by hand.
+ * the caller re-parsing it by hand. "sample" is the one format that emits
+ * fewer items rather than fewer bytes per item; its sampling lives in
+ * sample.ts and is reached only from here.
  */
 
+import type { SpillStore } from "./spill.js";
+import { sampleText } from "./sample.js";
+
 /** The re-encodings `--format` and `pruning.format` offer. */
-export type Format = "raw" | "compact" | "table";
+export type Format = "raw" | "compact" | "table" | "sample";
+
+/**
+ * What "sample" needs beyond the text: the budget that decides whether an
+ * encoding is too big to hand back inline, and the store its withheld items
+ * are spilled to. Supplied by `renderContent`, which holds both.
+ */
+export interface EncodeEnv {
+  thresholdBytes: number;
+  store: SpillStore;
+}
 
 /** A value as a table cell: JSON for compounds, String for the rest. */
 function cell(value: unknown): string {
@@ -71,13 +86,18 @@ function toTable(rows: Array<Record<string, unknown>>): string {
 /**
  * Re-encode one text.
  *
- * "raw" returns the text as it came. "compact" and "table" parse it as JSON
- * and re-serialise it; text that does not parse is a server's own answer, not
- * a formatting choice, so it comes back unchanged under every format. Every
- * rewrite is noted with the flag that undoes it, so the original stays one
- * `--format raw` away.
+ * "raw" returns the text as it came. "compact", "table" and "sample" parse it
+ * as JSON and re-serialise it; text that does not parse is a server's own
+ * answer, not a formatting choice, so it comes back unchanged under every
+ * format. Every rewrite is noted with the flag that undoes it, so the original
+ * stays one `--format raw` away.
  */
-export function reencode(text: string, format: Format, note: (m: string) => void): string {
+export function reencode(
+  text: string,
+  format: Format,
+  note: (m: string) => void,
+  env: EncodeEnv,
+): string {
   if (format === "raw") return text;
   let parsed: unknown;
   try {
@@ -95,6 +115,33 @@ export function reencode(text: string, format: Format, note: (m: string) => void
       "table needs one uniform array of objects, so compact JSON was used; --format raw returns the original",
     );
     return JSON.stringify(parsed);
+  }
+  if (format === "sample") {
+    const rows = tabularRows(parsed);
+    if (rows === undefined) {
+      note(
+        "sample needs one uniform array of objects to sample, so compact JSON was used; --format raw returns the original",
+      );
+      return JSON.stringify(parsed);
+    }
+    // The lossless encoding is exactly what "table" prints, and sampling keeps
+    // or withholds whole items of it; two lines of a Markdown table, the header
+    // row and the separator, are not items.
+    const sampled = sampleText(
+      { text: toTable(rows), items: rows, fixedLines: 2 },
+      { thresholdBytes: env.thresholdBytes },
+      env.store,
+    );
+    if (sampled.refused !== undefined) {
+      note(`sample refused: ${sampled.refused}; --format raw returns the original`);
+    } else if (sampled.withheld > 0) {
+      note(
+        `sample kept ${sampled.kept} of ${sampled.total} items; --format raw returns the original`,
+      );
+    } else {
+      note("text re-encoded as a table; --format raw returns the original");
+    }
+    return sampled.text;
   }
   const compact = JSON.stringify(parsed);
   if (compact === text) return text;

@@ -6,6 +6,7 @@ import {
   ConfigError,
   DEFAULT_CONFIG_DIR,
   DEFAULT_CONFIG_PATH,
+  DEFAULT_PRUNING,
   bridgeSettings,
   blockedBy,
   configPath,
@@ -315,8 +316,15 @@ describe("the pruning block", () => {
     expect(() => parseConfig({ pruning: { describeBlocks: "yes" } }, "t")).toThrow(ConfigError);
   });
 
-  it("refuses a format that is not one of the three names", () => {
+  it("refuses a format that is not one of the four names", () => {
     expect(() => parseConfig({ pruning: { format: "yaml" } }, "t")).toThrow(ConfigError);
+  });
+
+  it("accepts sample as the configured format without moving the default", () => {
+    expect(pruningSettings(parseConfig({ pruning: { format: "sample" } }, "t")).format).toBe(
+      "sample",
+    );
+    expect(DEFAULT_PRUNING.format).toBe("raw");
   });
 
   it("refuses a spillDir that is not a non-empty string", () => {

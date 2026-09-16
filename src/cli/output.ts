@@ -102,7 +102,10 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
       .map((block) =>
         block.type === "text" && typeof block.text === "string"
           ? opts
-            ? reencode(block.text, opts.format, opts.note)
+            ? reencode(block.text, opts.format, opts.note, {
+                thresholdBytes: opts.prune.thresholdBytes,
+                store: opts.store,
+              })
             : block.text
           : opts?.describeBlocks
             ? describeBlock(block)
