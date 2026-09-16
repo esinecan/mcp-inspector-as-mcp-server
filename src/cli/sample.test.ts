@@ -231,6 +231,89 @@ describe("the refusal rule", () => {
   });
 });
 
+describe("the shrink loop", () => {
+  /**
+   * The uniform table the design reviewer's check builds, at `count` items: the
+   * exact shape the quadratic shrink was measured hanging on.
+   */
+  function wide(count: number): SampleEncoding {
+    const items = Array.from({ length: count }, (_, i) => ({
+      kind: i % 2 ? "a" : "b",
+      seq: i,
+      pad: "x".repeat(40),
+    }));
+    const rows = items.map((r) => `| ${r.kind} | ${r.seq} | ${r.pad} |`);
+    return {
+      text: ["| kind | seq | pad |", "| --- | --- | --- |", ...rows].join("\n"),
+      items,
+      fixedLines: 2,
+    };
+  }
+
+  it("samples a 40000-item encoding in well under a second, not 4x per doubling", () => {
+    const { store } = fakeStore();
+    const started = Date.now();
+    const r = sampleText(wide(40000), { thresholdBytes: 8000 }, store);
+    const ms = Date.now() - started;
+    const message = `kept ${r.kept} of 40000 in ${ms} ms`;
+    expect(ms, message).toBeLessThan(1000);
+    expect(r.kept, message).toBeGreaterThan(2);
+    expect(bytes(r.text)).toBeLessThan(8000);
+  });
+
+  it("costs about the same per item at 40k as at 5k, so the shrink is linear in the items", () => {
+    const at = (count: number): number => {
+      const started = Date.now();
+      sampleText(wide(count), { thresholdBytes: 8000 }, fakeStore().store);
+      return Date.now() - started;
+    };
+    const small = at(5000);
+    const big = at(40000);
+    // Eight times the items must not cost eight times the time; the quadratic
+    // loop was, every doubling, so this ratio is the number that caught it.
+    expect(big, `5k in ${small} ms, 40k in ${big} ms`).toBeLessThan(small * 8);
+  });
+
+  it("prices a keep-set at exactly the bytes the rendered text carries", () => {
+    // The shrink the quadratic loop performed, rerun here over rendered texts
+    // alone: whatever (first, last) it settles on, the sampler must print
+    // byte-for-byte the same text, so the fix changed the cost and nothing else.
+    const digest = "feedface0000";
+    const shrunkTo = (e: SampleEncoding, thresholdBytes: number): string => {
+      const total = e.items.length;
+      let first = Math.max(1, Math.round(total * 0.3));
+      let last = Math.max(1, Math.round(total * 0.15));
+      const lines = e.text.split("\n");
+      const items = lines.slice(2);
+      const full = (): string =>
+        [
+          ...lines.slice(0, 2),
+          ...items.slice(0, first),
+          `... ${total - first - last} of ${total} items withheld. mcp-cli spill get ${digest}`,
+          ...items.slice(items.length - last),
+        ].join("\n");
+      while (bytes(full()) >= thresholdBytes && first + last > 2) {
+        if (first < last) last--;
+        else first--;
+      }
+      return full();
+    };
+    const { store } = fakeStore(digest);
+    // Twenty items and up is where the refusal rule lets the shrink run at all
+    // on this array, whose kind field repeats in only one of five below twenty.
+    for (const count of [20, 50, 137, 300]) {
+      const e = encoding(uniform(count));
+      for (const share of [2, 3, 10]) {
+        const thresholdBytes = Math.floor(bytes(e.text) / share);
+        const message = `${count} items at a ${share}th of the encoding`;
+        expect(sampleText(e, { thresholdBytes }, store).text, message).toBe(
+          shrunkTo(e, thresholdBytes),
+        );
+      }
+    }
+  });
+});
+
 describe("the spill contract", () => {
   it("hands the store the whole lossless text, never the sampled one", () => {
     const { store, puts } = fakeStore();

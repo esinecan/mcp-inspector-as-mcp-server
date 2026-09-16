@@ -55,6 +55,51 @@ export interface SampleResult {
 const MIN_ITEMS = 5;
 
 /**
+ * The pieces of one lossless encoding the shrink needs, each priced once.
+ *
+ * `headPrefix[i]` is the UTF-8 byte length of the first `i` item lines, and
+ * `tailSuffix[i]` the last `i`, so any keep-set is one addition rather than a
+ * re-render of the whole text. The newlines the render's join inserts are
+ * accounted by `keptBytes`, not here.
+ */
+interface ItemPrices {
+  fixed: number;
+  fixedLines: number;
+  headPrefix: number[];
+  tailSuffix: number[];
+  total: number;
+  digest: string;
+}
+
+/**
+ * One pass over the lossless text, and every line's byte length is known for
+ * the rest of the shrink: the split the render needs is made once here and
+ * priced here, never again inside the loop. `fixedLines` is taken from the
+ * encoding rather than trusted, because the two are the same number only while
+ * the table renderer prints one line per item.
+ */
+function priceItems(encoding: SampleEncoding, digest: string): ItemPrices {
+  const lines = encoding.text.split("\n");
+  const fixedLines = lines.length - encoding.items.length;
+  const items = lines.slice(fixedLines);
+  const sizes = items.map((line) => byteCount(line));
+  const headPrefix = [0];
+  for (const size of sizes) headPrefix.push(headPrefix[headPrefix.length - 1] + size);
+  const tailSuffix = [0];
+  for (let i = sizes.length - 1; i >= 0; i--) {
+    tailSuffix.push(tailSuffix[tailSuffix.length - 1] + sizes[i]);
+  }
+  return {
+    fixed: lines.slice(0, fixedLines).reduce((sum, line) => sum + byteCount(line), 0),
+    fixedLines,
+    headPrefix,
+    tailSuffix,
+    total: encoding.items.length,
+    digest,
+  };
+}
+
+/**
  * A field is repeated signal when at most this share of its values are
  * distinct. When no field of the array reaches it, every field is near-unique.
  */
@@ -109,15 +154,34 @@ export function refuseSample(items: Array<Record<string, unknown>>): string | un
 /**
  * The two kept runs as one text: the fixed lines, the first `first` items, the
  * handle line, the last `last` items. Every line but the handle is a line of
- * the lossless encoding, in its original order.
+ * the lossless encoding, in its original order. Called once per sample, for
+ * the keep-set the shrink settled on.
  */
 function keptText(encoding: SampleEncoding, first: number, last: number, digest: string): string {
   const lines = encoding.text.split("\n");
-  const items = lines.slice(encoding.fixedLines);
-  const head = lines.slice(0, encoding.fixedLines).concat(items.slice(0, first));
+  const fixedLines = lines.length - encoding.items.length;
+  const items = lines.slice(fixedLines);
+  const head = lines.slice(0, fixedLines).concat(items.slice(0, first));
   const tail = items.slice(items.length - last);
   const handle = sampleHandle(encoding.items.length - (first + last), encoding.items.length, digest);
   return [...head, handle, ...tail].join("\n");
+}
+
+/**
+ * The price of one keep-set in the UTF-8 bytes the budget is counted in, so the
+ * shrink can weigh every candidate without rendering it first. The sum is
+ * exact, not an estimate: every part is whole lines, UTF-8 is additive over
+ * parts, and joining `n` lines takes `n - 1` newlines, so this is the byte
+ * count of the text `keptText` would print for the same keep-set.
+ */
+function keptBytes(prices: ItemPrices, first: number, last: number): number {
+  return (
+    prices.fixed +
+    prices.headPrefix[first] +
+    prices.tailSuffix[last] +
+    byteCount(sampleHandle(prices.total - first - last, prices.total, prices.digest)) +
+    (prices.fixedLines + first + last)
+  );
 }
 
 /**
@@ -148,11 +212,19 @@ export function sampleText(
   if (first + last >= total) return whole;
 
   const digest = store.put(encoding.text);
-  let text = keptText(encoding, first, last, digest);
-  while (byteCount(text) >= opts.thresholdBytes && first + last > 2) {
+  // The shrink prices every keep-set from the one split, so the loop is
+  // arithmetic on the counts and the text itself is rendered once, at the end,
+  // for the keep-set the loop settled on.
+  const prices = priceItems(encoding, digest);
+  while (keptBytes(prices, first, last) >= opts.thresholdBytes && first + last > 2) {
     if (first < last) last--;
     else first--;
-    text = keptText(encoding, first, last, digest);
   }
-  return { text, digest, total, kept: first + last, withheld: total - first - last };
+  return {
+    text: keptText(encoding, first, last, digest),
+    digest,
+    total,
+    kept: first + last,
+    withheld: total - first - last,
+  };
 }
