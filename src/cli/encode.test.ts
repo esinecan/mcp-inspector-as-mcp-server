@@ -190,7 +190,7 @@ describe("reencode with format sample, lossless first", () => {
       JSON.stringify(payload),
     );
     expect(s.notes).toEqual([
-      "sample needs one uniform array of objects to sample, so compact JSON was used; --format raw returns the original",
+      "sample needs one uniform array of objects, so compact JSON was used; --format raw returns the original",
     ]);
   });
 });

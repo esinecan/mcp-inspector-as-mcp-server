@@ -41,8 +41,15 @@ export interface SampledText {
   digest: string;
 }
 
-/** A value as a table cell: JSON for compounds, String for the rest. */
-function cell(value: unknown): string {
+/**
+ * A value as a table cell: JSON for compounds, String for the rest.
+ *
+ * Exported because the near-unique refusal rule counts distinct values by
+ * exactly this rendering - the rendering the table's caller sees - so the two
+ * must be one predicate or the rule starts judging fields by a rendering the
+ * output no longer uses.
+ */
+export function cell(value: unknown): string {
   return value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
@@ -66,6 +73,26 @@ function isTabular(array: unknown): array is Array<Record<string, unknown>> {
       Object.keys(row).length === keys.length &&
       keys.every((key) => key in row && !/[\n\r|]/.test(key) && !/[\n\r|]/.test(cell(row[key]))),
   );
+}
+
+/**
+ * The one uniform array the tabular formats need, or compact JSON when there
+ * is none to find. Both "table" and "sample" answer the same question first —
+ * is there one unambiguous array of records to render — so they share this one
+ * step and each notes the fallback in its own voice.
+ */
+function rowsOrCompact(
+  parsed: unknown,
+  note: (m: string) => void,
+  format: "table" | "sample",
+): Array<Record<string, unknown>> | undefined {
+  const rows = tabularRows(parsed);
+  if (rows === undefined) {
+    note(
+      `${format} needs one uniform array of objects, so compact JSON was used; --format raw returns the original`,
+    );
+  }
+  return rows;
 }
 
 /**
@@ -129,30 +156,22 @@ export function reencode(
     return text;
   }
   if (format === "table") {
-    const rows = tabularRows(parsed);
+    const rows = rowsOrCompact(parsed, note, "table");
     if (rows !== undefined) {
       note("text re-encoded as a table; --format raw returns the original");
       return toTable(rows);
     }
-    note(
-      "table needs one uniform array of objects, so compact JSON was used; --format raw returns the original",
-    );
     return JSON.stringify(parsed);
   }
   if (format === "sample") {
-    const rows = tabularRows(parsed);
-    if (rows === undefined) {
-      note(
-        "sample needs one uniform array of objects to sample, so compact JSON was used; --format raw returns the original",
-      );
-      return JSON.stringify(parsed);
-    }
+    const rows = rowsOrCompact(parsed, note, "sample");
+    if (rows === undefined) return JSON.stringify(parsed);
     // The lossless encoding is exactly what "table" prints, and sampling keeps
     // or withholds whole items of it; two lines of a Markdown table, the header
     // row and the separator, are not items.
     const lossless = toTable(rows);
     const sampled = sampleText(
-      { text: lossless, items: rows, fixedLines: 2 },
+      { text: lossless, items: rows },
       { thresholdBytes: env.thresholdBytes },
       env.store,
     );

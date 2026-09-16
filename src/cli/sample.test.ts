@@ -81,15 +81,18 @@ function encoding(items: Array<Record<string, unknown>>): SampleEncoding {
     thresholdBytes: 1,
     store: NO_SPILL,
   });
-  return { text, items, fixedLines: 2 };
+  return { text, items };
 }
 
 /** The bytes of one text in the UTF-8 the budget is measured in. */
 const bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 
+/** The lines of a table that are not items: the header and the separator. */
+const FIXED_LINES = 2;
+
 /** The item lines of an encoding, one line per item. */
 function itemLines(e: SampleEncoding): string[] {
-  return e.text.split("\n").slice(e.fixedLines);
+  return e.text.split("\n").slice(FIXED_LINES);
 }
 
 /**
@@ -253,7 +256,6 @@ describe("the shrink loop", () => {
     return {
       text: ["| kind | seq | pad |", "| --- | --- | --- |", ...rows].join("\n"),
       items,
-      fixedLines: 2,
     };
   }
 
@@ -535,7 +537,7 @@ describe("payloads with no table to sample", () => {
       const { out, notes } = sample(JSON.stringify(payload), 1, store);
       expect(out, label).toBe(JSON.stringify(payload));
       expect(notes, label).toEqual([
-        "sample needs one uniform array of objects to sample, so compact JSON was used; --format raw returns the original",
+        "sample needs one uniform array of objects, so compact JSON was used; --format raw returns the original",
       ]);
     }
   });
@@ -561,7 +563,7 @@ describe("payloads with no table to sample", () => {
     expect(notes).toHaveLength(1);
     expect(keptCount).toBeGreaterThan(2);
     expect(bytes(out)).toBeLessThan(700);
-    expect(out.split("\n")).toHaveLength(e.fixedLines + keptCount + 1);
+    expect(out.split("\n")).toHaveLength(FIXED_LINES + keptCount + 1);
     expect(puts).toEqual([e.text]);
   });
 });
@@ -605,7 +607,7 @@ describe("content that imitates a handle line", () => {
       if (line.startsWith("... ")) continue;
       expect(lossless.has(line), line).toBe(true);
     }
-    expect(r.text.split("\n")).toHaveLength(e.fixedLines + r.kept + 1);
+    expect(r.text.split("\n")).toHaveLength(FIXED_LINES + r.kept + 1);
     expect(r.kept + r.withheld).toBe(r.total);
   });
 });

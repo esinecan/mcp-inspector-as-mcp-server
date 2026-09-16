@@ -17,6 +17,7 @@
  */
 
 import type { SpillStore } from "./spill.js";
+import { cell } from "./encode.js";
 
 /** What sampleText needs from the config's pruning block. */
 export interface SampleOptions {
@@ -32,8 +33,6 @@ export interface SampleEncoding {
   text: string;
   /** The items the encoding holds, in their original order. */
   items: Array<Record<string, unknown>>;
-  /** How many leading lines of `text` are not items, a table's header and separator. */
-  fixedLines: number;
 }
 
 /** One sampled encoding, with the counts needed to report what was withheld. */
@@ -119,11 +118,6 @@ function byteCount(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-/** A value as text, the same String/JSON split a table cell renders with. */
-function rendered(value: unknown): string {
-  return value !== null && typeof value === "object" ? JSON.stringify(value) : String(value);
-}
-
 /**
  * The one line that states which items were withheld and how to read them all
  * back. The withheld count comes first, then the total, mirroring the byte
@@ -146,7 +140,7 @@ export function refuseSample(items: Array<Record<string, unknown>>): string | un
     return `${items.length} items is too few to have a pattern`;
   }
   const repeated = Object.keys(items[0]).some(
-    (key) => new Set(items.map((item) => rendered(item[key]))).size / items.length <= NEAR_UNIQUE,
+    (key) => new Set(items.map((item) => cell(item[key]))).size / items.length <= NEAR_UNIQUE,
   );
   return repeated ? undefined : "every field is near-unique across the items";
 }
@@ -209,7 +203,9 @@ export function sampleText(
 
   let first = Math.max(1, Math.round(total * FIRST_FRACTION));
   let last = Math.max(1, Math.round(total * LAST_FRACTION));
-  if (first + last >= total) return whole;
+  // The refusal rule has already turned away every total below MIN_ITEMS, and
+  // for every total from there up the two fractions leave a withheld middle,
+  // so the keep-set cannot overlap and needs no guard against it.
 
   const digest = store.put(encoding.text);
   // The shrink prices every keep-set from the one split, so the loop is
