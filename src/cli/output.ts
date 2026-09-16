@@ -13,7 +13,9 @@ import type { SpillStore } from "./spill.js";
 import type { Format } from "./encode.js";
 import { reencode } from "./encode.js";
 import { pruneText } from "./prune.js";
+import { searchStored } from "./intent.js";
 import { describeBlock } from "./describe.js";
+import { DEFAULT_PRUNING } from "./config.js";
 
 /** One line of text out. */
 export type Sink = (text: string) => void;
@@ -72,9 +74,24 @@ export interface RenderOptions {
   prune: PruneOptions;
   store: SpillStore;
   note: (m: string) => void;
+  /**
+   * `--intent`: given, the stored whole text is searched for it instead of the
+   * head being printed, so the withheld part of an oversize answer is still
+   * reachable without `mcp-cli spill get`. Undefined leaves the render as it
+   * is, head and handle and all.
+   */
+  intent?: string;
+  /** How much an `--intent` answer may be, from `pruning.intentBudget`. */
+  intentBudget?: number;
 }
 
-/** Render an MCP result's content blocks as plain text. */
+/**
+ * Render an MCP result's content blocks as plain text.
+ *
+ * An `--intent` narrows the whole rendered text — the text pruning spills in
+ * full, not the head it prints — and the answer carries no handle line, because
+ * the handle's command is what this flag replaces.
+ */
 export function renderContent(result: unknown, opts?: RenderOptions): string {
   const r = result as {
     content?: Array<{ type?: string; text?: string; [k: string]: unknown }>;
@@ -92,7 +109,18 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
             : JSON.stringify(block),
       )
       .join("\n");
-    return opts ? pruneText(joined, opts.prune, opts.store).text : joined;
+    if (!opts) return joined;
+    const pruned = pruneText(joined, opts.prune, opts.store);
+    if (opts.intent === undefined) return pruned.text;
+    // The intent searches the whole rendered text — the very text the store
+    // holds — never the head, so the withheld bytes stay reachable through it
+    // and the handle line can never pass for one more chunk of the answer.
+    if (pruned.digest !== undefined) {
+      opts.note(`--intent narrowed a spilled result; mcp-cli spill get ${pruned.digest} reads it whole`);
+    }
+    return searchStored(joined, opts.intent, {
+      budgetBytes: opts.intentBudget ?? DEFAULT_PRUNING.intentBudget,
+    }).text;
   }
   if (r.structuredContent !== undefined) return JSON.stringify(r.structuredContent, null, 2);
   return JSON.stringify(result, null, 2);

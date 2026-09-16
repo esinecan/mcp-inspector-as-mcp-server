@@ -42,7 +42,6 @@ import { cmdBridge } from "./bridge.js";
 import { cmdDaemon, daemonEnabled, daemonSettings } from "./daemon.js";
 import { DaemonSessions } from "./daemon-session.js";
 import { fileSpillStore, runSpillCommand } from "./spill.js";
-import { searchStored } from "./intent.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -190,6 +189,7 @@ function context(args: ParsedArgs): Context {
     prune: { thresholdBytes: pruning.thresholdBytes, headBytes: pruning.headBytes },
     store: fileSpillStore(pruning.spillDir),
     note: (m) => out.note(m),
+    intentBudget: pruning.intentBudget,
   };
 
   return { fleet, sessions, out, render };
@@ -305,16 +305,20 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
   });
 
   // The --json path is untouched: it serialises the raw result object, so no
-  // pruning, describing or re-encoding can ever reach it.
-  ctx.out.emit(result, () => {
-    let text = renderContent(result, ctx.render);
-    if (args.intent !== undefined) {
-      const budget = pruningSettings(ctx.fleet.config).intentBudget;
-      text = searchStored(text, args.intent, { budgetBytes: budget }).text;
-    }
-    return text;
-  });
+  // pruning, describing, re-encoding or intent narrowing can ever reach it.
+  ctx.out.emit(result, () => renderContent(result, renderIntent(ctx.render, args.intent)));
   return result.isError === true ? EXIT_FAILURE : EXIT_OK;
+}
+
+/**
+ * The render of one call, with this call's `--intent` folded in.
+ *
+ * The intent belongs to the render, not after it: it searches the whole text
+ * pruning spills, so it must be inside the same renderContent call rather than
+ * applied to the head that call prints. No intent means the render as it is.
+ */
+function renderIntent(render: RenderOptions, intent: string | undefined): RenderOptions {
+  return intent === undefined ? render : { ...render, intent };
 }
 
 /* ---------------------------------------------------------------- spill -- */

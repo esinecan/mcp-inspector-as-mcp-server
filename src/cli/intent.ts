@@ -106,13 +106,31 @@ function skippedMarker(skipped: number): string {
   return skipped === 1 ? "[1 chunk skipped]" : `[${skipped} chunks skipped]`;
 }
 
+/** The line that marks a chunk cut short by the budget, not by the input. */
+const CLIPPED = "[chunk clipped at the intent budget]";
+
+/**
+ * The leading whole lines of `chunk` that fit in `bound` characters, so a cut
+ * chunk still begins and ends on line boundaries, the same discipline as the
+ * head cut of an oversize result.
+ */
+function headChars(chunk: string, bound: number): string {
+  const prefix = chunk.slice(0, Math.max(0, bound));
+  const cut = prefix.lastIndexOf("\n");
+  return cut === -1 ? "" : prefix.slice(0, cut + 1);
+}
+
 /**
  * Search one stored text for the intent.
  *
  * The best-scoring chunks up to `budgetBytes` are returned in their original
  * order and verbatim; a separator line states how many chunks were skipped
- * between two kept ones. An intent that matches nothing returns the head of
- * the text, never an empty answer, with a line saying that is what happened.
+ * between two kept ones. A best chunk larger than the whole budget is not
+ * thrown away: its leading whole lines come back with a marker saying the
+ * budget cut it, because the head of the chunk the intent ranks first is more
+ * answer than the head of the text. An intent that matches nothing returns the
+ * head of the text, never an empty answer, with a line saying that is what
+ * happened.
  */
 export function searchStored(text: string, intent: string, opts: IntentOptions): IntentResult {
   // One chunk back means there was no blank line to split on, so a text of
@@ -137,20 +155,36 @@ export function searchStored(text: string, intent: string, opts: IntentOptions):
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index);
 
-  // The separator between two kept chunks costs its own line too, so the
-  // whole answer stays inside the budget.
-  const separatorCost = skippedMarker(0).length + 1;
+  // The answer is assembled exactly as it will be returned — pieces in their
+  // original order, markers between them — and a chunk joins only when the
+  // assembled whole still fits the budget, so the bound holds by construction
+  // rather than by an estimate of what the separators will cost.
   const budget = Math.max(0, opts.budgetBytes);
-  const picked: number[] = [];
-  let spent = 0;
-  for (const { index, chunk } of scored) {
-    const cost = chunk.length + (picked.length > 0 ? separatorCost : 0);
-    if (spent + cost <= budget) {
-      picked.push(index);
-      spent += cost;
+  const picked: Array<{ index: number; piece: string; clipped: boolean }> = [];
+  const assemble = (): string => {
+    const parts: string[] = [];
+    let previous = -1;
+    for (const { index, piece, clipped } of [...picked].sort((a, b) => a.index - b.index)) {
+      if (parts.length > 0) parts.push(skippedMarker(index - previous - 1));
+      parts.push(piece);
+      if (clipped) parts.push(CLIPPED);
+      previous = index;
     }
+    return parts.join("\n");
+  };
+
+  for (const { index, chunk } of scored) {
+    picked.push({ index, piece: chunk, clipped: false });
+    if (assemble().length <= budget) continue;
+    picked.pop();
+    // The best-scoring chunk is taken even when only part of it fits: the
+    // intent asked for it, so its head is more answer than none of it, and
+    // cheaper chunks may still fit beside it. The marker says which happened.
+    if (picked.length > 0) continue;
+    const room = Math.max(0, budget - CLIPPED.length - 1);
+    const kept = headChars(chunk, room);
+    if (kept.length > 0) picked.push({ index, piece: kept, clipped: true });
   }
-  picked.sort((a, b) => a - b);
 
   if (picked.length === 0) {
     // Nothing matched, or nothing fitted: the head of the text is still the
@@ -168,12 +202,9 @@ export function searchStored(text: string, intent: string, opts: IntentOptions):
     };
   }
 
-  const parts: string[] = [];
-  let previous = -1;
-  for (const index of picked) {
-    if (parts.length > 0) parts.push(skippedMarker(index - previous - 1));
-    parts.push(chunks[index]);
-    previous = index;
-  }
-  return { text: parts.join("\n"), chunksReturned: picked.length, chunksTotal: chunks.length };
+  return {
+    text: assemble(),
+    chunksReturned: picked.length,
+    chunksTotal: chunks.length,
+  };
 }

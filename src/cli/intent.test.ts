@@ -59,6 +59,29 @@ describe("searchStored chunk fidelity", () => {
     expect(result.text.length).toBeLessThanOrEqual(40);
     expect(result.text.length).toBeGreaterThan(0);
   });
+
+  it("counts the separators between several kept chunks inside the budget exactly", () => {
+    const text = [
+      "needle 1",
+      "filler",
+      "filler",
+      "needle 2",
+      "filler",
+      "filler",
+      "needle 3",
+    ].join("\n\n");
+    // Three 8-character chunks and two 18-character separators cost exactly
+    // 8*3 + (18+2)*2 = 64 characters: at 64 all three come back, and at one
+    // less the third no longer fits, so the bound is the real one, not loose.
+    const exact = searchStored(text, "needle", { budgetBytes: 64 });
+    expect(exact.chunksReturned).toBe(3);
+    expect(exact.text.length).toBe(64);
+    expect(exact.text).toContain("[2 chunks skipped]");
+
+    const tight = searchStored(text, "needle", { budgetBytes: 63 });
+    expect(tight.chunksReturned).toBe(2);
+    expect(tight.text.length).toBeLessThanOrEqual(63);
+  });
 });
 
 describe("searchStored fallbacks and markers", () => {
@@ -91,5 +114,24 @@ describe("searchStored fallbacks and markers", () => {
     expect(result.chunksTotal).toBe(3);
     expect(result.chunksReturned).toBe(2);
     expect(result.text).toContain("[1 chunk skipped]");
+  });
+
+  it("clips the best chunk instead of discarding it when the budget is smaller than it", () => {
+    const text = ["common filler", "needle\n".repeat(400), "common filler"].join("\n\n");
+    const result = searchStored(text, "needle", { budgetBytes: 100 });
+    expect(result.chunksReturned).toBe(1);
+    expect(result.text.length).toBeLessThanOrEqual(100);
+    expect(result.text).toContain("[chunk clipped at the intent budget]");
+    expect(result.text).not.toContain("every matching chunk is larger than the budget");
+    expect(result.text.startsWith("needle")).toBe(true);
+  });
+
+  it("keeps the clipped head a prefix of the chunk, whole lines only", () => {
+    const chunk = Array.from({ length: 40 }, (_, i) => `needle line ${i}`).join("\n");
+    const text = `filler\n\n${chunk}`;
+    const result = searchStored(text, "needle", { budgetBytes: 150 });
+    const body = result.text.split("\n[")[0];
+    expect(chunk.startsWith(body)).toBe(true);
+    expect(result.text).toContain("[chunk clipped at the intent budget]");
   });
 });

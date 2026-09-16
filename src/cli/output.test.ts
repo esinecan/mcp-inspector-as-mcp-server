@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { Output, columnWidth, firstLine, oneLine, renderContent } from "./output.js";
-import { NO_SPILL } from "./spill.js";
+import { NO_SPILL, type SpillStore } from "./spill.js";
 
 const FIXTURE = join(__dirname, "__fixtures__", "memory-search-result.json");
 
@@ -97,6 +97,84 @@ describe("the --json contract over a real captured result", () => {
       note: () => {},
     });
     expect(rendered).toBe(parsed.content[0].text);
+  });
+});
+
+describe("the pruning and intent wiring over a real captured result", () => {
+  const parsed = JSON.parse(readFileSync(FIXTURE, "utf8")) as {
+    content: Array<{ type?: string; text?: string }>;
+  };
+  const text = parsed.content[0].text as string;
+
+  /** A store that records what it is handed and answers with a fixed digest. */
+  function recordingStore(digest: string): { store: SpillStore; puts: string[] } {
+    const puts: string[] = [];
+    const store: SpillStore = {
+      put: (bytes: string): string => {
+        puts.push(bytes);
+        return digest;
+      },
+      get: () => null,
+      path: (d: string) => d,
+      prune: () => 0,
+      resolve: (d: string) => d,
+    };
+    return { store, puts };
+  }
+
+  it("searches the whole stored text under --intent, not the head", () => {
+    const { store, puts } = recordingStore("0123456789abcdef");
+    const notes: string[] = [];
+    const rendered = renderContent(parsed, {
+      describeBlocks: true,
+      format: "raw",
+      prune: { thresholdBytes: 100, headBytes: 50 },
+      store,
+      note: (m) => notes.push(m),
+      intent: "partition",
+      intentBudget: 2000,
+    });
+    // The store holds the whole text, so the intent sees every chunk of it.
+    expect(puts).toEqual([text]);
+    expect(rendered).not.toContain("more bytes withheld");
+    expect(rendered).not.toContain("spill get");
+    // "partition" first appears far past the 50-byte head, so a hit is proof
+    // the search ran over the whole stored text and not over the head.
+    expect(text.indexOf("partition")).toBeGreaterThan(50);
+    expect(rendered).toContain("partition");
+  });
+
+  it("narrows a result under the threshold without touching the store", () => {
+    const { store, puts } = recordingStore("0123456789abcdef");
+    const rendered = renderContent(parsed, {
+      describeBlocks: true,
+      format: "raw",
+      prune: { thresholdBytes: 8000, headBytes: 2000 },
+      store,
+      note: () => {},
+      intent: "mcp",
+      intentBudget: 2000,
+    });
+    // Below the threshold nothing is spilled, and the intent still narrows.
+    expect(puts).toEqual([]);
+    expect(rendered).not.toBe(text);
+    expect(rendered.length).toBeLessThan(text.length);
+    expect(rendered).toContain("mcp");
+  });
+
+  it("notes the digest of a spilled result an intent narrowed", () => {
+    const { store } = recordingStore("0123456789abcdef");
+    const notes: string[] = [];
+    renderContent(parsed, {
+      describeBlocks: true,
+      format: "raw",
+      prune: { thresholdBytes: 100, headBytes: 50 },
+      store,
+      note: (m) => notes.push(m),
+      intent: "partition",
+      intentBudget: 2000,
+    });
+    expect(notes.join("\n")).toContain("spill get 0123456789abcdef");
   });
 });
 
