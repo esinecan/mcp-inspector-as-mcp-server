@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { NO_SPILL, fileSpillStore, runSpillCommand } from "./spill.js";
@@ -36,9 +36,9 @@ function capture() {
   };
 }
 
-/** A 64-hex-character name that shares a prefix with its siblings. */
-function hexName(filler: string): string {
-  return "deadbeefdeadbeef".concat(filler).padEnd(64, "0");
+/** A 64-hex-character store name that starts with `prefix`. */
+function hexName(prefix: string): string {
+  return prefix.padEnd(64, "0");
 }
 
 describe("NO_SPILL", () => {
@@ -98,15 +98,18 @@ describe("fileSpillStore.get", () => {
 
   it("returns null for an ambiguous prefix rather than guessing", () => {
     const store = fileSpillStore(dir);
-    rmSync(join(dir, `${hexName("aa")}.txt`), { force: true });
-    rmSync(join(dir, `${hexName("bb")}.txt`), { force: true });
+    // Two hand-written entries share the eight-character prefix "deadbeef", so
+    // the store has two live candidates to refuse between.
+    writeFileSync(join(dir, `${hexName("deadbeefaa")}.txt`), "first candidate", "utf8");
+    writeFileSync(join(dir, `${hexName("deadbeefbb")}.txt`), "second candidate", "utf8");
     expect(store.get("deadbeef")).toBeNull();
+    expect(store.resolve("deadbeef")).toBeNull();
   });
 
   it("returns null for a prefix shorter than eight characters", () => {
     const store = fileSpillStore(dir);
-    store.put("too short a prefix");
-    expect(store.get("abc")).toBeNull();
+    const digest = store.put("too short a prefix");
+    expect(store.get(digest.slice(0, 7))).toBeNull();
   });
 });
 
