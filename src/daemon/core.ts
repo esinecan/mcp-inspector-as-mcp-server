@@ -4,25 +4,29 @@
  * The HTTP adapter hands over whatever it read off the wire and learns nothing
  * about valid shapes, the way the bridge's `execBridged` works. Every failure
  * leaves here as a `DaemonError` carrying the code the CLI turns back into an
- * exit code, so the surface and the CLI cannot disagree about what a refusal
- * means.
+ * exit code and the class the CLI's executor trusts, so the surface and the
+ * CLI cannot disagree about what a refusal means.
+ *
+ * The daemon is where concurrent processes meet one warm server, so the
+ * per-server queue lives here: one operation at a time per server by
+ * default, a bounded number waiting, and a wait that counts against the
+ * request's own budget. The daemon does not retry; the CLI's executor does,
+ * and the daemon tells it what class of failure it saw so it can decide. A
+ * connection-level failure drops the warm session, so the retry connects
+ * fresh instead of talking to a dead process.
  *
  * The seven operations are exactly the seven a `ServerSession` performs. Adding
- * an eighth means adding it in three places: this file, the `ServerSession`
- * interface, and the client adapter.
+ * an eighth means adding it in three places: this file, the operation union,
+ * and the lanes.
  */
 
 import { resolve } from "path";
 import { CliError } from "../cli/errors.js";
-import type {
-  ConnectionInfo,
-  PromptDescriptor,
-  PromptResult,
-  ResourceDescriptor,
-  ResourceResult,
-  ToolDescriptor,
-  ToolResult,
-} from "../cli/server-session.js";
+import { ruleFor, supervisionSettings } from "../cli/config.js";
+import { performOnClient, type OperationClient } from "../cli/server-session.js";
+import { classifyThrown, type Classified, type RefusalReason } from "../supervise/classify.js";
+import type { Operation as SupervisedOperation } from "../supervise/operation.js";
+import { Gates, QueueFull, QueueTimeout } from "../supervise/queue.js";
 import type { WarmProvider } from "./registry.js";
 
 /**
@@ -38,11 +42,16 @@ import type { WarmProvider } from "./registry.js";
 export type DaemonErrorCode = "usage" | "blocked" | "server" | "config-mismatch";
 
 export class DaemonError extends Error {
+  /** The class the CLI's executor reads, when the failure is a server failure. */
+  readonly classified?: Classified;
+
   constructor(
     message: string,
     readonly code: DaemonErrorCode,
+    classified?: Classified,
   ) {
     super(message);
+    if (classified !== undefined) this.classified = classified;
   }
 }
 
@@ -68,6 +77,8 @@ export interface OpRequest {
   server: string;
   op: Operation;
   timeoutMs?: number;
+  /** The caller's trace id, for the log line. */
+  trace?: string;
   /** `callTool` and `getPrompt`. */
   name?: string;
   /** `callTool`. */
@@ -77,17 +88,6 @@ export interface OpRequest {
   /** `readResource`. */
   uri?: string;
 }
-
-/** What one answered operation returns. Shapes are the `ServerSession` shapes. */
-export type OpResult =
-  | ConnectionInfo
-  | ToolDescriptor[]
-  | ToolResult
-  | ResourceDescriptor[]
-  | ResourceResult
-  | PromptDescriptor[]
-  | PromptResult
-  | null;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -133,6 +133,7 @@ function checkRequest(raw: unknown): OpRequest {
     }
     request.timeoutMs = raw.timeoutMs;
   }
+  if (raw.trace !== undefined && typeof raw.trace === "string") request.trace = raw.trace;
   if (raw.name !== undefined) {
     if (typeof raw.name !== "string") throw new DaemonError("name must be a string", "usage");
     request.name = raw.name;
@@ -155,13 +156,63 @@ function checkRequest(raw: unknown): OpRequest {
   return request;
 }
 
+/** The wire request as the operation union the lanes and the session speak. */
+function toOperation(request: OpRequest): SupervisedOperation {
+  switch (request.op) {
+    case "info":
+    case "listTools":
+    case "listResources":
+    case "listPrompts":
+      return { kind: request.op };
+    case "callTool":
+      return {
+        kind: "callTool",
+        name: requiredName(request, "callTool"),
+        args: request.args ?? {},
+      };
+    case "getPrompt":
+      return {
+        kind: "getPrompt",
+        name: requiredName(request, "getPrompt"),
+        args: request.promptArgs ?? {},
+      };
+    case "readResource":
+      if (request.uri === undefined) throw new DaemonError("readResource needs a uri", "usage");
+      return { kind: "readResource", uri: request.uri };
+  }
+}
+
+/** What the daemon core needs beyond the warm store. Built once per daemon. */
+export interface DaemonCore {
+  gates: Gates;
+}
+
+/** The gates a daemon holds, with limits read from the config file as it stands. */
+export function daemonCore(warm: WarmProvider, now: () => number = Date.now): DaemonCore {
+  const gates = new Gates((server) => {
+    let config;
+    try {
+      config = warm.fleet("default").config;
+    } catch {
+      config = undefined;
+    }
+    const rule = ruleFor(supervisionSettings(config), server);
+    return { concurrency: rule.concurrency, queueLength: rule.queueLength };
+  }, now);
+  return { gates };
+}
+
 /**
  * Answer one request against the warm store.
  *
  * Never throws synchronously: the HTTP adapter calls this from inside a stream
  * callback, where a synchronous throw would be an uncaught exception.
  */
-export async function handleOp(raw: unknown, warm: WarmProvider): Promise<OpResult> {
+export async function handleOp(
+  raw: unknown,
+  warm: WarmProvider,
+  core?: DaemonCore,
+): Promise<unknown> {
   let request: OpRequest;
   try {
     request = checkRequest(raw);
@@ -170,13 +221,17 @@ export async function handleOp(raw: unknown, warm: WarmProvider): Promise<OpResu
   }
 
   try {
-    return await dispatch(request, warm);
+    return await dispatch(request, warm, core);
   } catch (err) {
     throw asDaemonError(err);
   }
 }
 
-async function dispatch(request: OpRequest, warm: WarmProvider): Promise<OpResult> {
+async function dispatch(
+  request: OpRequest,
+  warm: WarmProvider,
+  core?: DaemonCore,
+): Promise<unknown> {
   if (!samePath(request.config, warm.configPath)) {
     throw new DaemonError(
       `this daemon serves ${warm.configPath}, not ${request.config}`,
@@ -199,52 +254,59 @@ async function dispatch(request: OpRequest, warm: WarmProvider): Promise<OpResul
     }
   }
 
-  const session = await warm.session(request.server, request.timeoutMs);
-  if (request.op === "info") return session.info;
+  const op = toOperation(request);
+  const started = Date.now();
+  const deadlineAt = request.timeoutMs === undefined ? undefined : started + request.timeoutMs;
 
-  const { client, capabilities } = session;
-  const options = request.timeoutMs === undefined ? undefined : { timeout: request.timeoutMs };
-
-  switch (request.op) {
-    case "listTools": {
-      // No cache. Every call reaches the server, so the tool list is as fresh
-      // as it is without a daemon.
-      const result = await client.listTools(undefined, options);
-      return result.tools.map((t) => ({ name: t.name, description: t.description }));
-    }
-    case "callTool": {
-      const name = requiredName(request, "callTool");
-      return (await client.callTool(
-        { name, arguments: request.args ?? {} },
-        options,
-      )) as unknown as ToolResult;
-    }
-    case "listResources": {
-      if (!capabilities?.resources) return null;
-      const result = await client.listResources(undefined, options);
-      return result.resources.map((r) => ({ uri: r.uri, name: r.name }));
-    }
-    case "readResource": {
-      if (request.uri === undefined) {
-        throw new DaemonError("readResource needs a uri", "usage");
+  let release: (() => void) | undefined;
+  if (core !== undefined) {
+    try {
+      release = await core.gates.for(request.server).acquire(deadlineAt);
+    } catch (err) {
+      if (err instanceof QueueFull) {
+        throw new DaemonError(`${request.server}: ${err.message}; not queued`, "server", {
+          class: "blocked",
+          reason: "queue_full" satisfies RefusalReason,
+          message: `${request.server}: ${err.message}; not queued`,
+          remediation: "Wait and try again; the daemon's queue drains in order.",
+        });
       }
-      return (await client.readResource(
-        { uri: request.uri },
-        options,
-      )) as unknown as ResourceResult;
+      const waited = err instanceof QueueTimeout ? err.waitedMs : Date.now() - started;
+      throw new DaemonError(
+        `${request.server}: the budget of ${request.timeoutMs}ms passed after ${waited}ms in the daemon's queue`,
+        "server",
+        {
+          class: "timeout",
+          message: `${request.server}: the budget of ${request.timeoutMs}ms passed after ${waited}ms in the daemon's queue`,
+        },
+      );
     }
-    case "listPrompts": {
-      if (!capabilities?.prompts) return null;
-      const result = await client.listPrompts(undefined, options);
-      return result.prompts.map((p) => ({ name: p.name, description: p.description }));
+  }
+
+  try {
+    // The budget that is left after the queue is the budget of the request.
+    const remaining = deadlineAt === undefined ? undefined : Math.max(1, deadlineAt - Date.now());
+    const session = await warm.session(request.server, remaining);
+    if (op.kind === "info") return session.info;
+    try {
+      return await performOnClient(
+        session.client as unknown as OperationClient,
+        session.capabilities,
+        session.info,
+        op,
+        remaining,
+      );
+    } catch (err) {
+      const classified = classifyThrown(err);
+      if (classified.class === "transient" && warm.drop !== undefined) {
+        // The warm session is not trusted after a connection failure; the
+        // next request connects fresh.
+        await warm.drop(request.server);
+      }
+      throw new DaemonError(classified.message, "server", classified);
     }
-    case "getPrompt": {
-      const name = requiredName(request, "getPrompt");
-      return (await client.getPrompt(
-        { name, arguments: request.promptArgs ?? {} },
-        options,
-      )) as unknown as PromptResult;
-    }
+  } finally {
+    release?.();
   }
 }
 
@@ -259,16 +321,18 @@ function requiredName(request: OpRequest, op: string): string {
  * Give any failure a code. A `CliError` raised inside the config or fleet
  * modules already carries the exit code the CLI would have used, so its code is
  * translated rather than flattened: an unknown server name stays a usage error
- * and does not become a connection failure.
+ * and does not become a connection failure. A server failure also carries the
+ * class the executor reads.
  */
 export function asDaemonError(err: unknown): DaemonError {
   if (err instanceof DaemonError) return err;
   if (err instanceof CliError) {
     const code: DaemonErrorCode =
       err.exitCode === 2 ? "usage" : err.exitCode === 3 ? "blocked" : "server";
-    return new DaemonError(err.message, code);
+    return new DaemonError(err.message, code, code === "server" ? classifyThrown(err) : undefined);
   }
-  return new DaemonError(err instanceof Error ? err.message : String(err), "server");
+  const classified = classifyThrown(err);
+  return new DaemonError(classified.message, "server", classified);
 }
 
 /** The HTTP status that carries each code. The CLI reads the code, not this. */

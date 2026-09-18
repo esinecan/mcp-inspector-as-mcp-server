@@ -37,6 +37,8 @@ export interface ExecResult {
   exit: number;
   stdout: string;
   stderr: string;
+  /** Present only when a stream was cut at the output cap: the bytes dropped per stream. */
+  truncated?: { stdout: number; stderr: number };
 }
 
 export interface ExecOptions {
@@ -45,10 +47,13 @@ export interface ExecOptions {
   defaultTimeoutS?: number;
   /** A request may not ask for more than this. */
   maxTimeoutS?: number;
+  /** Bytes kept per stream. The rest is dropped and counted in `truncated`. */
+  maxOutputBytes?: number;
 }
 
 export const DEFAULT_TIMEOUT_S = 600;
 export const MAX_TIMEOUT_S = 3600;
+export const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 /** The exit code a timed-out command reports, as `timeout(1)` does. */
 export const TIMEOUT_EXIT = 124;
@@ -154,6 +159,40 @@ function decode(chunks: Buffer[]): string {
 }
 
 /**
+ * A bounded capture of one stream. Bytes past the cap are counted and
+ * dropped, never buffered, so a command that prints without end cannot grow
+ * the bridge's memory with it.
+ */
+class Capture {
+  readonly chunks: Buffer[] = [];
+  private kept = 0;
+  dropped = 0;
+
+  constructor(private readonly cap: number) {}
+
+  push(chunk: Buffer): void {
+    const room = this.cap - this.kept;
+    if (room <= 0) {
+      this.dropped += chunk.length;
+      return;
+    }
+    if (chunk.length <= room) {
+      this.chunks.push(chunk);
+      this.kept += chunk.length;
+      return;
+    }
+    this.chunks.push(chunk.subarray(0, room));
+    this.kept += room;
+    this.dropped += chunk.length - room;
+  }
+
+  text(): string {
+    const body = decode(this.chunks);
+    return this.dropped > 0 ? `${body}\n[mcp-cli bridge: ${this.dropped} more bytes cut]` : body;
+  }
+}
+
+/**
  * Run one request. The argument is `unknown` because both adapters read it off
  * a wire; see `checkRequest`. Every failure is a rejection, never a throw.
  */
@@ -192,13 +231,22 @@ export function execBridged(req: unknown, options: ExecOptions): Promise<ExecRes
       return;
     }
 
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
+    const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    const out = new Capture(cap);
+    const err = new Capture(cap);
     let settled = false;
     let timedOut = false;
 
     child.stdout?.on("data", (c: Buffer) => out.push(c));
     child.stderr?.on("data", (c: Buffer) => err.push(c));
+
+    /** The result with the cut counted, when there was one. */
+    const withTruncation = (result: ExecResult): ExecResult => {
+      if (out.dropped > 0 || err.dropped > 0) {
+        result.truncated = { stdout: out.dropped, stderr: err.dropped };
+      }
+      return result;
+    };
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -223,18 +271,22 @@ export function execBridged(req: unknown, options: ExecOptions): Promise<ExecRes
       if (timedOut) {
         // The partial output is worth keeping; the caller learns why it stopped
         // from stderr, which replaces whatever the child had written.
-        finish({
-          exit: TIMEOUT_EXIT,
-          stdout: pathMap.toContainer(decode(out)),
-          stderr: `timeout after ${timeoutS}s`,
-        });
+        finish(
+          withTruncation({
+            exit: TIMEOUT_EXIT,
+            stdout: pathMap.toContainer(out.text()),
+            stderr: `timeout after ${timeoutS}s`,
+          }),
+        );
         return;
       }
-      finish({
-        exit: code ?? 1,
-        stdout: pathMap.toContainer(decode(out)),
-        stderr: pathMap.toContainer(decode(err)),
-      });
+      finish(
+        withTruncation({
+          exit: code ?? 1,
+          stdout: pathMap.toContainer(out.text()),
+          stderr: pathMap.toContainer(err.text()),
+        }),
+      );
     });
 
     if (child.stdin) {

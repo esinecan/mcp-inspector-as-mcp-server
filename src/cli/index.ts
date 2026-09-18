@@ -8,8 +8,8 @@
  * between two calls shows its new tools on the second one.
  *
  * This file holds command bodies and nothing else. The fleet answers every
- * question that needs no connection, the session provider is the only way to
- * reach a server, and the output module is the only thing that writes.
+ * question that needs no connection, the executor is the only way to reach a
+ * server, and the output module is the only thing that writes.
  */
 
 import { writeFileSync, mkdirSync, existsSync, readFileSync, realpathSync } from "fs";
@@ -23,17 +23,13 @@ import {
   configPath,
   parseConfig,
   pruningSettings,
+  routeSettings,
+  supervisionSettings,
   DEFAULT_CONFIG_PATH,
   type CliConfig,
 } from "./config.js";
 import { loadFleet, type Fleet } from "./fleet.js";
-import {
-  CLIENT_VERSION,
-  EphemeralSessions,
-  ServerError,
-  type SessionProvider,
-  type ToolDescriptor,
-} from "./server-session.js";
+import { CLIENT_VERSION, ServerError, type ToolDescriptor } from "./server-session.js";
 import { resolveAddress, splitAddress } from "./match.js";
 import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
@@ -47,8 +43,22 @@ import {
 } from "./output.js";
 import { cmdBridge } from "./bridge.js";
 import { cmdDaemon, daemonEnabled, daemonSettings } from "./daemon.js";
-import { DaemonSessions } from "./daemon-session.js";
 import { fileSpillStore, runSpillCommand } from "./spill.js";
+import {
+  DaemonLane,
+  EphemeralLane,
+  McpExecutor,
+  SupervisedError,
+  fileSink,
+  fileStateStore,
+  NO_EVENTS,
+  plainEnvelope,
+  type Executed,
+  type Lane,
+  type Operation,
+} from "../supervise/index.js";
+import { cmdCircuits } from "./circuits.js";
+import { cmdSearch } from "./search.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -64,6 +74,8 @@ Usage:
   mcp-cli read <server> <uri>              read one resource
   mcp-cli prompts <server>                 list prompts
   mcp-cli prompt <server.name> [args]      get one prompt
+  mcp-cli search <query> [--limit N]       web search, Google first and Brave when it fails
+  mcp-cli circuits <status|reset> [server] what the supervisor refuses right now, and why
   mcp-cli import-claude                    build the config from ~/.claude.json
   mcp-cli bridge <serve|mcp|selftest|exec> run host commands over the path contract
   mcp-cli daemon <start|stop|status|serve> keep server connections warm between calls
@@ -75,34 +87,40 @@ stdin, or as "@path" to read a file.
 Global flags:
   --config <path>   config file (default ${DEFAULT_CONFIG_PATH}, env MCP_CLI_CONFIG)
   --profile <name>  blocklist profile (env MCP_CLI_PROFILE, default "default")
-  --json            one JSON object on stdout instead of text
-  --timeout <ms>    budget for connecting and for each request
+  --json            one JSON object on stdout instead of text; a failure is an envelope
+  --timeout <ms>    total budget of one operation, queue wait included
   --all             with "tools", also show blocked tools, marked
   --format <raw|compact|table|sample>  how a text result is re-encoded, with "call"
   --intent <text>   narrow a stored result to what it asked for, with "call"
+  --limit <n>       with "search", how many rows
+  --provider <name> with "search", one server instead of the route
   --port, --bind    with "bridge serve", the listening socket
   --port            with "daemon", its port (env MCP_CLI_DAEMON_PORT, default 8791)
+  --log <path>      with "daemon serve" and "bridge serve", append the log there
   --cwd, --stdin    with "bridge exec", the working directory and standard input
   --help, --version
 
-Exit codes: 0 success, 1 failure, 2 usage error, 3 tool blocked by the profile.
+Exit codes: 0 success, 1 failure, 2 usage error, 3 tool blocked by the profile,
+4 refused before dispatch (circuit open, excluded request, queue full, daemon
+required, or arguments over the limit).
 
 With a daemon running, every call reuses one warm connection per server, so a
 stdio server keeps its own state between two calls. MCP_CLI_DAEMON=0 turns that
 off for one run.`;
+
+/** Executors opened by this run, closed when the command ends. */
+const openExecutors: McpExecutor[] = [];
 
 /**
  * Run one command and return its exit code. Exported so a test can drive the
  * whole surface in process; the file runs it only when it is the entry point.
  */
 export async function main(argv: string[]): Promise<number> {
-  const stderr = new Output(false);
-
   let args: ParsedArgs;
   try {
     args = parseArgs(argv);
   } catch (err) {
-    return fail(stderr, err as Error);
+    return fail(new Output(false), err as Error, false);
   }
 
   if (args.version) {
@@ -140,53 +158,92 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdPrompts(args);
       case "prompt":
         return await cmdPrompt(args);
+      case "search":
+        return await cmdSearch(args, context(args));
+      case "circuits":
+        return cmdCircuits(args, context(args));
       default:
         throw new UsageError(`Unknown command "${args.command}". Run mcp-cli --help.`);
     }
   } catch (err) {
-    return fail(stderr, err as Error);
+    return fail(new Output(args.json), err as Error, args.json);
+  } finally {
+    await Promise.all(openExecutors.splice(0).map((executor) => executor.close()));
   }
-}
-
-/** Report a failure and hand back the exit code the error itself carries. */
-function fail(out: Output, err: Error): number {
-  out.note(err.message);
-  return err instanceof CliError ? err.exitCode : EXIT_FAILURE;
-}
-
-/** Everything a server-touching command needs. */
-interface Context {
-  fleet: Fleet;
-  sessions: SessionProvider;
-  out: Output;
-  render: RenderOptions;
 }
 
 /**
- * The one place the two session adapters are chosen between.
+ * Report a failure and hand back the exit code the error itself carries.
  *
- * `EphemeralSessions` is always built, because it is also what the daemon
- * adapter falls back to when nothing answers on the daemon port. Which one
- * actually runs is settled by the first request of each run, not here: there is
- * no synchronous way to ask whether a TCP port is listening, and a refused
+ * In text mode the message is one line on stderr, with the class and the
+ * next move on a second line when the supervisor knows them. Under `--json`
+ * the failure is the stable envelope on stdout, so a pipeline that reads
+ * stdout always gets one JSON object, success or not.
+ */
+function fail(out: Output, err: Error, json: boolean): number {
+  const code = err instanceof CliError ? err.exitCode : EXIT_FAILURE;
+  if (json) {
+    const envelope =
+      err instanceof SupervisedError ? err.envelope() : plainEnvelope(err as CliError);
+    out.emit(envelope, () => "");
+  }
+  out.note(err.message);
+  if (err instanceof SupervisedError) {
+    const r = err.report;
+    const tag = r.reason !== undefined ? `${r.class}/${r.reason}` : r.class;
+    const lines = [`[${tag}] ${r.server} ${r.operation} attempts=${r.attempts} trace=${r.trace}`];
+    if (r.remediation !== undefined) lines.push(r.remediation);
+    out.note(lines.join("\n         "));
+  }
+  return code;
+}
+
+/** Everything a server-touching command needs. */
+export interface Context {
+  fleet: Fleet;
+  executor: McpExecutor;
+  out: Output;
+  render: RenderOptions;
+  /** The `--timeout` budget for every operation of this run, if given. */
+  deadlineMs?: number;
+}
+
+/**
+ * The one place the executor and its lanes are built.
+ *
+ * The ephemeral lane is always built, because it is also where an operation
+ * goes when nothing answers on the daemon port. Which lane actually runs is
+ * settled by the first operation of each run, not here: there is no
+ * synchronous way to ask whether a TCP port is listening, and a refused
  * connection has to mean "no daemon" rather than "failure".
  */
-function context(args: ParsedArgs): Context {
+export function context(args: ParsedArgs): Context {
   const fleet = loadFleet({ config: args.config, profile: args.profile });
-  const ephemeral = new EphemeralSessions(fleet, { timeoutMs: args.timeoutMs });
-  let sessions: SessionProvider = ephemeral;
+  const settings = supervisionSettings(fleet.config);
+  const ephemeral = new EphemeralLane(fleet);
+  let primary: Lane = ephemeral;
+  let fallback: Lane | undefined;
 
   if (daemonEnabled()) {
-    const settings = daemonSettings(args);
-    sessions = new DaemonSessions({
-      host: settings.host,
-      port: settings.port,
-      configPath: settings.configPath,
+    const daemon = daemonSettings(args, process.env, fleet.config);
+    primary = new DaemonLane({
+      host: daemon.host,
+      port: daemon.port,
+      configPath: daemon.configPath,
       profile: fleet.profile.name,
-      timeoutMs: args.timeoutMs,
-      fallback: ephemeral,
     });
+    fallback = ephemeral;
   }
+
+  const executor = new McpExecutor({
+    fleet,
+    settings,
+    primary,
+    fallback,
+    store: fileStateStore(join(settings.stateDir, "circuits.json")),
+    events: settings.eventLog !== undefined ? fileSink(settings.eventLog) : NO_EVENTS,
+  });
+  openExecutors.push(executor);
 
   const out = new Output(args.json);
   const pruning = pruningSettings(fleet.config);
@@ -199,7 +256,25 @@ function context(args: ParsedArgs): Context {
     intentBudget: pruning.intentBudget,
   };
 
-  return { fleet, sessions, out, render };
+  const ctx: Context = { fleet, executor, out, render };
+  if (args.timeoutMs !== undefined) ctx.deadlineMs = args.timeoutMs;
+  return ctx;
+}
+
+/** One operation through the executor, with this run's budget. */
+export function run<O extends Operation>(
+  ctx: Context,
+  server: string,
+  op: O,
+): Promise<Executed<import("../supervise/operation.js").ResultOf<O>>> {
+  return ctx.executor.execute(server, op, {
+    ...(ctx.deadlineMs !== undefined ? { deadlineMs: ctx.deadlineMs } : {}),
+  });
+}
+
+/** The routes block of this run's config. */
+export function routesOf(ctx: Context): ReturnType<typeof routeSettings> {
+  return routeSettings(ctx.fleet.config);
 }
 
 /** The one positional a command requires, or a usage error naming what it is. */
@@ -232,6 +307,7 @@ interface ToolRow {
   server: string;
   name: string;
   description?: string;
+  readOnly?: boolean;
   blockedBy?: string;
 }
 
@@ -242,6 +318,7 @@ function toRows(fleet: Fleet, serverName: string, tools: ToolDescriptor[]): Tool
     const pattern = fleet.blockedBy(address);
     const row: ToolRow = { address, server: serverName, name: tool.name };
     if (tool.description !== undefined) row.description = tool.description;
+    if (tool.annotations?.readOnlyHint === true) row.readOnly = true;
     if (pattern) row.blockedBy = pattern;
     return row;
   });
@@ -253,15 +330,20 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
   const names = target ? [ctx.fleet.resolveServer(target)] : ctx.fleet.names();
 
   const rows: ToolRow[] = [];
-  const errors: Array<{ server: string; error: string }> = [];
+  const errors: Array<{ server: string; error: string; class?: string }> = [];
 
   for (const name of names) {
     try {
-      const tools = await ctx.sessions.run(name, (session) => session.listTools());
-      rows.push(...toRows(ctx.fleet, name, tools));
+      const { value } = await run(ctx, name, { kind: "listTools" });
+      rows.push(...toRows(ctx.fleet, name, value));
     } catch (err) {
       // One unreachable server must not sink a whole-fleet listing.
-      errors.push({ server: name, error: oneLine((err as Error).message) });
+      const row: { server: string; error: string; class?: string } = {
+        server: name,
+        error: oneLine((err as Error).message),
+      };
+      if (err instanceof SupervisedError) row.class = err.report.class;
+      errors.push(row);
     }
   }
 
@@ -305,11 +387,18 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
   // An address the profile blocks outright never reaches the server at all.
   refuseIfBlocked(ctx, `${serverName}.${split.tool}`);
 
-  const result = await ctx.sessions.run(serverName, async (session) => {
-    const tools = await session.listTools();
-    const toolName = pickTool(ctx, `${serverName}.${split.tool}`, serverName, tools);
-    return session.callTool(toolName, rawArgs);
-  });
+  const tools = await run(ctx, serverName, { kind: "listTools" });
+  const toolName = pickTool(ctx, `${serverName}.${split.tool}`, serverName, tools.value);
+  const executed = await run(ctx, serverName, { kind: "callTool", name: toolName, args: rawArgs });
+  const result = executed.value;
+
+  if (executed.failure !== undefined && !args.json) {
+    // The result is printed as the server answered it; the class is a remark.
+    const f = executed.failure;
+    ctx.out.note(
+      `${serverName}.${toolName} reported ${f.class}${f.remediation ? `: ${f.remediation}` : ""}`,
+    );
+  }
 
   // The --json path is untouched: it serialises the raw result object, so no
   // pruning, describing, re-encoding or intent narrowing can ever reach it.
@@ -389,7 +478,7 @@ async function cmdInfo(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
   const serverName = ctx.fleet.resolveServer(required(args, 0, "info needs a server name"));
 
-  const info = await ctx.sessions.run(serverName, async (session) => session.info);
+  const { value: info } = await run(ctx, serverName, { kind: "info" });
   const payload = {
     server: serverName,
     transport: info.transport,
@@ -418,7 +507,7 @@ async function cmdResources(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
   const serverName = ctx.fleet.resolveServer(required(args, 0, "resources needs a server name"));
 
-  const resources = await ctx.sessions.run(serverName, (session) => session.listResources());
+  const { value: resources } = await run(ctx, serverName, { kind: "listResources" });
   if (resources === null) {
     ctx.out.note(`${serverName} advertises no resources capability`);
   }
@@ -437,7 +526,7 @@ async function cmdRead(args: ParsedArgs): Promise<number> {
   const uri = required(args, 1, "read needs a server name and a resource URI");
   const serverName = ctx.fleet.resolveServer(target);
 
-  const result = await ctx.sessions.run(serverName, (session) => session.readResource(uri));
+  const { value: result } = await run(ctx, serverName, { kind: "readResource", uri });
 
   ctx.out.emit(result, () =>
     (result.contents ?? [])
@@ -451,7 +540,7 @@ async function cmdPrompts(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
   const serverName = ctx.fleet.resolveServer(required(args, 0, "prompts needs a server name"));
 
-  const prompts = await ctx.sessions.run(serverName, (session) => session.listPrompts());
+  const { value: prompts } = await run(ctx, serverName, { kind: "listPrompts" });
   if (prompts === null) {
     ctx.out.note(`${serverName} advertises no prompts capability`);
   }
@@ -481,9 +570,11 @@ async function cmdPrompt(args: ParsedArgs): Promise<number> {
     promptArgs[k] = typeof v === "string" ? v : JSON.stringify(v);
   }
 
-  const result = await ctx.sessions.run(serverName, (session) =>
-    session.getPrompt(split.tool, promptArgs),
-  );
+  const { value: result } = await run(ctx, serverName, {
+    kind: "getPrompt",
+    name: split.tool,
+    args: promptArgs,
+  });
 
   ctx.out.emit(result, () =>
     (result.messages ?? [])

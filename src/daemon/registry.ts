@@ -59,6 +59,8 @@ export interface WarmProvider {
   fleet(profile: string): Fleet;
   /** The warm session for one server, connecting it if it is cold. */
   session(serverName: string, timeoutMs?: number): Promise<WarmSession>;
+  /** Close one warm server and forget it, so the next request connects fresh. */
+  drop?(serverName: string): Promise<void>;
 }
 
 interface Entry {

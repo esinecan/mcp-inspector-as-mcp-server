@@ -1,14 +1,12 @@
 /**
- * The one seam between a command and a server.
+ * One open conversation with one server, and the seven things it can do.
  *
- * A command asks a `SessionProvider` for a `ServerSession` and speaks MCP
- * through it. It never builds a transport, never holds an SDK `Client`, and
- * never passes a timeout, because the session already carries its budget.
- *
- * v0 ships one adapter, `EphemeralSessions`, which connects, acts and
- * disconnects. A warm daemon is a second adapter for the same two interfaces:
- * it answers over its own surface and returns the same result shapes, so no
- * command changes. See docs/mcp-cli-daemon.md.
+ * Nothing above this file builds a transport, holds an SDK `Client`, or reads
+ * a capability. A command hands the executor an operation; a lane opens a
+ * session here and performs it. `performOnClient` is the one place an
+ * operation becomes an SDK call, shared by the ephemeral lane in this process
+ * and by the daemon that holds a warm client, so the two cannot disagree
+ * about what an operation means.
  */
 
 import { Client } from "@modelcontextprotocol/client";
@@ -18,6 +16,7 @@ import { protocolEraOf, type ProtocolEra } from "../session.js";
 import { resolveServerEntry } from "./config.js";
 import { transportOf, type Fleet } from "./fleet.js";
 import { CliError } from "./errors.js";
+import type { Operation } from "../supervise/operation.js";
 
 export const CLIENT_NAME = "mcp-cli";
 export const CLIENT_VERSION = "2.1.0";
@@ -33,9 +32,18 @@ export interface ConnectionInfo {
   capabilities: string[];
 }
 
+/** The hints a tool may carry about itself, as the protocol names them. */
+export interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 export interface ToolDescriptor {
   name: string;
   description?: string;
+  annotations?: ToolAnnotations;
 }
 
 export interface PromptDescriptor {
@@ -65,26 +73,6 @@ export interface PromptResult {
   [k: string]: unknown;
 }
 
-/**
- * One open conversation with one server. The list calls return null when the
- * server advertises no such capability, so no caller inspects capabilities
- * itself.
- */
-export interface ServerSession {
-  readonly info: ConnectionInfo;
-  listTools(): Promise<ToolDescriptor[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>;
-  listResources(): Promise<ResourceDescriptor[] | null>;
-  readResource(uri: string): Promise<ResourceResult>;
-  listPrompts(): Promise<PromptDescriptor[] | null>;
-  getPrompt(name: string, args: Record<string, string>): Promise<PromptResult>;
-}
-
-/** Where a session comes from. The seam a daemon substitutes at. */
-export interface SessionProvider {
-  run<T>(serverName: string, fn: (session: ServerSession) => Promise<T>): Promise<T>;
-}
-
 /** A failure that names the server it happened against. Exit code 1. */
 export class ServerError extends CliError {
   constructor(
@@ -95,112 +83,183 @@ export class ServerError extends CliError {
   }
 }
 
+/** The subset of an SDK client the seven operations need. */
+export interface OperationClient {
+  listTools(params?: undefined, options?: { timeout?: number }): Promise<{ tools: unknown[] }>;
+  callTool(
+    params: { name: string; arguments: Record<string, unknown> },
+    options?: { timeout?: number },
+  ): Promise<unknown>;
+  listResources(
+    params?: undefined,
+    options?: { timeout?: number },
+  ): Promise<{ resources: Array<{ uri: string; name?: string }> }>;
+  readResource(params: { uri: string }, options?: { timeout?: number }): Promise<unknown>;
+  listPrompts(
+    params?: undefined,
+    options?: { timeout?: number },
+  ): Promise<{ prompts: Array<{ name: string; description?: string }> }>;
+  getPrompt(
+    params: { name: string; arguments: Record<string, string> },
+    options?: { timeout?: number },
+  ): Promise<unknown>;
+}
+
+/** The tool descriptor the CLI keeps from a `tools/list` entry. */
+export function describeTool(tool: unknown): ToolDescriptor {
+  const t = tool as { name: string; description?: string; annotations?: ToolAnnotations };
+  const out: ToolDescriptor = { name: t.name };
+  if (t.description !== undefined) out.description = t.description;
+  if (t.annotations && typeof t.annotations === "object") {
+    const a: ToolAnnotations = {};
+    for (const key of [
+      "readOnlyHint",
+      "destructiveHint",
+      "idempotentHint",
+      "openWorldHint",
+    ] as const) {
+      if (typeof t.annotations[key] === "boolean") a[key] = t.annotations[key];
+    }
+    if (Object.keys(a).length > 0) out.annotations = a;
+  }
+  return out;
+}
+
+/**
+ * Perform one operation on an SDK client. The list calls answer null when the
+ * server advertises no such capability, so no caller inspects capabilities.
+ */
+export async function performOnClient(
+  client: OperationClient,
+  capabilities: Record<string, unknown> | undefined,
+  info: ConnectionInfo,
+  op: Operation,
+  timeoutMs?: number,
+): Promise<unknown> {
+  const options = timeoutMs === undefined ? undefined : { timeout: timeoutMs };
+  switch (op.kind) {
+    case "info":
+      return info;
+    case "listTools": {
+      const result = await client.listTools(undefined, options);
+      return result.tools.map(describeTool);
+    }
+    case "callTool":
+      return (await client.callTool({ name: op.name, arguments: op.args }, options)) as ToolResult;
+    case "listResources": {
+      if (!capabilities?.resources) return null;
+      const result = await client.listResources(undefined, options);
+      return result.resources.map((r) => ({ uri: r.uri, name: r.name }));
+    }
+    case "readResource":
+      return (await client.readResource({ uri: op.uri }, options)) as ResourceResult;
+    case "listPrompts": {
+      if (!capabilities?.prompts) return null;
+      const result = await client.listPrompts(undefined, options);
+      return result.prompts.map((p) => ({ name: p.name, description: p.description }));
+    }
+    case "getPrompt":
+      return (await client.getPrompt(
+        { name: op.name, arguments: op.args },
+        options,
+      )) as PromptResult;
+  }
+}
+
 export interface SessionOptions {
-  /** Budget in milliseconds for connecting and for each request. */
+  /** Budget in milliseconds for connecting. */
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
 }
 
-/** The v0 adapter: one connection per `run`, closed when the callback ends. */
-export class EphemeralSessions implements SessionProvider {
-  constructor(
-    private readonly fleet: Fleet,
-    private readonly options: SessionOptions = {},
-  ) {}
+/** A connection this process opened and must close. */
+export interface OpenSession {
+  readonly info: ConnectionInfo;
+  perform(op: Operation, timeoutMs?: number): Promise<unknown>;
+  close(): Promise<void>;
+}
 
-  async run<T>(serverName: string, fn: (session: ServerSession) => Promise<T>): Promise<T> {
-    const entry = resolveServerEntry(this.fleet.entry(serverName), this.options.env);
-    const transportConfig: TransportConfig = {
-      command: entry.command,
-      args: entry.args,
-      env: entry.env,
-      cwd: entry.cwd,
-      url: entry.url,
-      headers: entry.headers,
-      transport: entry.transport,
-      negotiation: entry.negotiation ?? "auto",
-    };
+/**
+ * Connect to one server from this process. The caller closes it. A failure
+ * to connect is a `ServerError` carrying the tail of the server's stderr,
+ * because that is where a stdio server says why it died.
+ */
+export async function openSession(
+  fleet: Fleet,
+  serverName: string,
+  options: SessionOptions = {},
+): Promise<OpenSession> {
+  const raw = fleet.entry(serverName);
+  const entry = resolveServerEntry(raw, options.env);
+  const transportConfig: TransportConfig = {
+    command: entry.command,
+    args: entry.args,
+    env: entry.env,
+    cwd: entry.cwd,
+    url: entry.url,
+    headers: entry.headers,
+    transport: entry.transport,
+    negotiation: entry.negotiation ?? "auto",
+  };
 
-    const transport = createTransport(transportConfig);
-    const stderrTail: string[] = [];
-    attachStderrTail(transport, stderrTail);
-    const detail = (): string =>
-      stderrTail.length ? `\n  server stderr: ${stderrTail.join(" ").trim()}` : "";
+  const transport = createTransport(transportConfig);
+  const stderrTail: string[] = [];
+  attachStderrTail(transport, stderrTail);
+  const detail = (): string =>
+    stderrTail.length ? `\n  server stderr: ${stderrTail.join(" ").trim()}` : "";
 
-    const client = new Client(
-      { name: CLIENT_NAME, version: CLIENT_VERSION },
-      { versionNegotiation: versionNegotiationFor(transportConfig) },
+  const client = new Client(
+    { name: CLIENT_NAME, version: CLIENT_VERSION },
+    { versionNegotiation: versionNegotiationFor(transportConfig) },
+  );
+
+  try {
+    await withTimeout(
+      client.connect(transport),
+      options.timeoutMs,
+      `connecting to "${serverName}"`,
     );
-
-    try {
-      await withTimeout(
-        client.connect(transport),
-        this.options.timeoutMs,
-        `connecting to "${serverName}"`,
-      );
-    } catch (err) {
-      await safeClose(transport);
-      throw new ServerError(`${(err as Error).message}${detail()}`, serverName);
-    }
-
-    const capabilities = client.getServerCapabilities();
-    const info: ConnectionInfo = {
-      serverName,
-      serverInfo: client.getServerVersion(),
-      protocolVersion: client.getNegotiatedProtocolVersion(),
-      era: protocolEraOf(client.getNegotiatedProtocolVersion()),
-      transport: transportOf(entry),
-      capabilities: capabilities ? Object.keys(capabilities).sort() : [],
-    };
-
-    const requestOptions =
-      this.options.timeoutMs !== undefined ? { timeout: this.options.timeoutMs } : undefined;
-
-    const session: ServerSession = {
-      info,
-      async listTools() {
-        const result = await client.listTools(undefined, requestOptions);
-        return result.tools.map((t) => ({ name: t.name, description: t.description }));
-      },
-      async callTool(name, args) {
-        return (await client.callTool(
-          { name, arguments: args },
-          requestOptions,
-        )) as unknown as ToolResult;
-      },
-      async listResources() {
-        if (!capabilities?.resources) return null;
-        const result = await client.listResources(undefined, requestOptions);
-        return result.resources.map((r) => ({ uri: r.uri, name: r.name }));
-      },
-      async readResource(uri) {
-        return (await client.readResource({ uri }, requestOptions)) as unknown as ResourceResult;
-      },
-      async listPrompts() {
-        if (!capabilities?.prompts) return null;
-        const result = await client.listPrompts(undefined, requestOptions);
-        return result.prompts.map((p) => ({ name: p.name, description: p.description }));
-      },
-      async getPrompt(name, args) {
-        return (await client.getPrompt(
-          { name, arguments: args },
-          requestOptions,
-        )) as unknown as PromptResult;
-      },
-    };
-
-    try {
-      return await fn(session);
-    } catch (err) {
-      // A control-flow error raised by the command itself (a usage error, a
-      // blocked address) keeps its own exit code instead of becoming a server
-      // failure.
-      if (err instanceof CliError) throw err;
-      throw new ServerError(`${(err as Error).message}${detail()}`, serverName);
-    } finally {
-      await safeClose(transport);
-    }
+  } catch (err) {
+    await safeClose(transport);
+    throw new ServerError(`${(err as Error).message}${detail()}`, serverName);
   }
+
+  const capabilities = client.getServerCapabilities() as Record<string, unknown> | undefined;
+  const info: ConnectionInfo = {
+    serverName,
+    serverInfo: client.getServerVersion(),
+    protocolVersion: client.getNegotiatedProtocolVersion(),
+    era: protocolEraOf(client.getNegotiatedProtocolVersion()),
+    transport: transportOf(raw),
+    capabilities: capabilities ? Object.keys(capabilities).sort() : [],
+  };
+
+  return {
+    info,
+    async perform(op, timeoutMs) {
+      try {
+        return await performOnClient(
+          client as unknown as OperationClient,
+          capabilities,
+          info,
+          op,
+          timeoutMs,
+        );
+      } catch (err) {
+        if (err instanceof CliError) throw err;
+        const e = err as Error & { code?: unknown };
+        const wrapped = new ServerError(`${e.message}${detail()}`, serverName) as ServerError & {
+          code?: unknown;
+          cause?: unknown;
+        };
+        // The JSON-RPC code is what the classifier trusts most; keep it.
+        if (e.code !== undefined) wrapped.code = e.code;
+        wrapped.cause = err;
+        throw wrapped;
+      }
+    },
+    close: () => safeClose(transport),
+  };
 }
 
 async function safeClose(transport: { close(): Promise<void> }): Promise<void> {

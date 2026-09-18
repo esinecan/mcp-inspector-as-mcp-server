@@ -18,12 +18,15 @@ import { UsageError } from "./errors.js";
 import {
   bridgeSettings,
   configPath,
+  isLoopback,
   parseConfig,
+  ConfigError,
   type BridgeSettings,
   type CliConfig,
 } from "./config.js";
 import { readArgumentText, readStdinSync } from "./input.js";
 import { Output } from "./output.js";
+import { logSink } from "./daemon.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -56,7 +59,33 @@ export function bridgeContext(settings: BridgeSettings): ExecOptions {
     }),
     defaultTimeoutS: settings.defaultTimeout,
     maxTimeoutS: settings.maxTimeout,
+    maxOutputBytes: settings.maxOutputBytes,
   };
+}
+
+/**
+ * The bearer token `bridge serve` requires, read from the environment
+ * variable the config names. A bind that anything on the network can reach
+ * must have one; a loopback bind may go without. The value is returned to
+ * the caller and to nothing else: not the log, not a response, not the file.
+ */
+export function bridgeToken(
+  settings: BridgeSettings,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (settings.authTokenEnv === undefined) {
+    if (isLoopback(settings.bind)) return undefined;
+    throw new ConfigError(
+      `bridge.bind is ${settings.bind}, which is reachable from the network, so "bridge.authTokenEnv" must name the environment variable that holds the bearer token`,
+    );
+  }
+  const token = env[settings.authTokenEnv];
+  if (token === undefined || token.trim().length === 0) {
+    throw new ConfigError(
+      `bridge.authTokenEnv names ${settings.authTokenEnv}, which is not set in this environment`,
+    );
+  }
+  return token;
 }
 
 export async function cmdBridge(args: ParsedArgs): Promise<number> {
@@ -112,17 +141,29 @@ async function cmdExec(args: ParsedArgs): Promise<number> {
 async function cmdServe(args: ParsedArgs): Promise<number> {
   const settings = loadBridgeSettings(args);
   const options = bridgeContext(settings);
-  const server = createBridgeHttpServer(options);
+  const token = bridgeToken(settings);
+  const log = logSink(args.log);
+  const server = createBridgeHttpServer({
+    ...options,
+    log,
+    token,
+    maxActive: settings.maxActive,
+    maxQueued: settings.maxQueued,
+    bind: settings.bind,
+    port: settings.port,
+  });
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(settings.port, settings.bind, resolve);
   });
 
-  process.stderr.write(
-    `mcp-cli: bridge serving POST /exec on ${settings.bind}:${settings.port}, ` +
-      `${settings.containerRoot} -> ${settings.hostRoot}\n`,
-  );
+  const banner =
+    `bridge serving POST /exec on ${settings.bind}:${settings.port}, ` +
+    `${settings.containerRoot} -> ${settings.hostRoot}, auth=${token !== undefined ? "bearer" : "none"}, ` +
+    `active<=${settings.maxActive} queued<=${settings.maxQueued}`;
+  log(banner);
+  if (args.log !== undefined) process.stderr.write(`mcp-cli: ${banner}, log ${args.log}\n`);
 
   // Serve until the process is killed. The HTTP server keeps the loop alive on
   // its own; this promise never settles, so the command never returns.

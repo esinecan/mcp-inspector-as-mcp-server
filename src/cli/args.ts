@@ -38,6 +38,12 @@ export interface ParsedArgs {
   intent?: string;
   /** `--older-than`, the age in days beyond which `spill prune` deletes. */
   olderThan?: number;
+  /** `--limit`, how many rows `search` returns. */
+  limit?: number;
+  /** `--provider`, one search server instead of the route. */
+  provider?: string;
+  /** `--log`, where `daemon serve` and `bridge serve` append their log lines. */
+  log?: string;
 }
 
 /** The values `--format` accepts, shared with the config file's pruning block. */
@@ -58,6 +64,9 @@ const VALUE_FLAGS = new Set([
   "--format",
   "--intent",
   "--older-than",
+  "--limit",
+  "--provider",
+  "--log",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -184,5 +193,19 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
       parsed.olderThan = days;
       return;
     }
+    case "--limit": {
+      const limit = Number(value);
+      if (!Number.isInteger(limit) || limit <= 0) {
+        throw new UsageError(`--limit needs a positive integer, got "${value}"`);
+      }
+      parsed.limit = limit;
+      return;
+    }
+    case "--provider":
+      parsed.provider = value;
+      return;
+    case "--log":
+      parsed.log = value;
+      return;
   }
 }

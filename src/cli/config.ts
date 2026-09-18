@@ -45,6 +45,18 @@ export interface BridgeEntry {
   bind?: string;
   defaultTimeout?: number;
   maxTimeout?: number;
+  /**
+   * The NAME of the environment variable that holds the bearer token. The
+   * value is read from the environment at start and never from this file.
+   * Required whenever `bind` is not a loopback address.
+   */
+  authTokenEnv?: string;
+  /** Commands running at once; the rest queue. */
+  maxActive?: number;
+  /** Requests waiting for a slot before the bridge answers 503. */
+  maxQueued?: number;
+  /** Bytes of stdout and of stderr returned per command; the rest is cut. */
+  maxOutputBytes?: number;
 }
 
 /** A bridge block with every default filled in. */
@@ -55,6 +67,10 @@ export interface BridgeSettings {
   bind: string;
   defaultTimeout: number;
   maxTimeout: number;
+  authTokenEnv?: string;
+  maxActive: number;
+  maxQueued: number;
+  maxOutputBytes: number;
 }
 
 /**
@@ -86,11 +102,70 @@ export interface PruningSettings {
   format: "raw" | "compact" | "table" | "sample";
 }
 
+/**
+ * One rule of the `supervision` block: the limits and the retry safety of one
+ * server, or of every server when it is the `defaults` entry. Every key is
+ * optional; a rule fills in from the defaults and the defaults from the
+ * built-in values below.
+ */
+export interface SupervisionRuleEntry {
+  /** Total budget of one operation, queue wait included. Milliseconds. */
+  deadlineMs?: number;
+  /** Operations in flight against this server at once. */
+  concurrency?: number;
+  /** Operations waiting for a slot before the next one is refused. */
+  queueLength?: number;
+  /** Attempts a retry-safe operation may take in total. Never more than two. */
+  maxAttempts?: number;
+  /** Consecutive transient failures before the server circuit opens. */
+  transientTripAfter?: number;
+  /** The first cooldown of an opened circuit. Milliseconds. */
+  cooldownMs?: number;
+  /** The cooldown doubles per failure while open, up to this. Milliseconds. */
+  cooldownMaxMs?: number;
+  /** The jittered wait before a second attempt, as [min, max] milliseconds. */
+  backoffMs?: [number, number];
+  /** Fail closed when no daemon answers, instead of launching the server here. */
+  daemonRequired?: boolean;
+  /** Tools that may be retried although they carry no readOnlyHint. Globs over the tool name. */
+  readOnlyTools?: string[];
+  /** The largest `callTool` argument object accepted, as UTF-8 JSON bytes. */
+  maxArgumentBytes?: number;
+}
+
+/** The `supervision` block. */
+export interface SupervisionEntry {
+  defaults?: SupervisionRuleEntry;
+  rules?: Record<string, SupervisionRuleEntry>;
+  /** Where the circuit file lives. */
+  stateDir?: string;
+  /** Where the JSONL event log goes; `false` turns it off. */
+  eventLog?: string | false;
+}
+
+/** The `routes` block: which servers stand behind a routed command. */
+export interface RoutesEntry {
+  search?: {
+    primary?: string;
+    fallback?: string;
+  };
+}
+
+/** The `daemon` block. */
+export interface DaemonEntry {
+  port?: number;
+  /** Servers `daemon serve` connects right after it starts listening. */
+  prewarm?: string[];
+}
+
 export interface CliConfig {
   mcpServers: Record<string, ServerEntry>;
   profiles?: Record<string, ProfileEntry>;
   bridge?: BridgeEntry;
   pruning?: PruningEntry;
+  supervision?: SupervisionEntry;
+  routes?: RoutesEntry;
+  daemon?: DaemonEntry;
 }
 
 export const DEFAULT_BRIDGE: BridgeSettings = {
@@ -100,7 +175,61 @@ export const DEFAULT_BRIDGE: BridgeSettings = {
   bind: "0.0.0.0",
   defaultTimeout: 600,
   maxTimeout: 3600,
+  maxActive: 2,
+  maxQueued: 8,
+  maxOutputBytes: 1024 * 1024,
 };
+
+/** A supervision rule with every value filled in. */
+export interface SupervisionRule {
+  deadlineMs: number;
+  concurrency: number;
+  queueLength: number;
+  maxAttempts: number;
+  transientTripAfter: number;
+  cooldownMs: number;
+  cooldownMaxMs: number;
+  backoffMs: [number, number];
+  daemonRequired: boolean;
+  readOnlyTools: string[];
+  maxArgumentBytes?: number;
+}
+
+export interface SupervisionSettings {
+  defaults: SupervisionRule;
+  rules: Record<string, SupervisionRuleEntry>;
+  stateDir: string;
+  /** Undefined when the log is turned off. */
+  eventLog?: string;
+}
+
+export const DEFAULT_SUPERVISION_RULE: SupervisionRule = {
+  deadlineMs: 60_000,
+  concurrency: 1,
+  queueLength: 32,
+  maxAttempts: 2,
+  transientTripAfter: 3,
+  cooldownMs: 60_000,
+  cooldownMaxMs: 15 * 60_000,
+  backoffMs: [250, 2000],
+  daemonRequired: false,
+  readOnlyTools: [],
+};
+
+export const DEFAULT_STATE_DIR = join(homedir(), ".agents", "mcp-cli-state");
+
+export interface RouteSettings {
+  search: { primary: string; fallback?: string };
+}
+
+export const DEFAULT_ROUTES: RouteSettings = {
+  search: { primary: "google-search", fallback: "brave-search" },
+};
+
+export interface DaemonConfigSettings {
+  port?: number;
+  prewarm: string[];
+}
 
 export const DEFAULT_PRUNING: PruningSettings = {
   thresholdBytes: 8000,
@@ -170,6 +299,9 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
 
   const bridge = parseBridgeEntry(obj.bridge, source);
   const pruning = parsePruningEntry(obj.pruning, source);
+  const supervision = parseSupervisionEntry(obj.supervision, source, Object.keys(mcpServers));
+  const routes = parseRoutesEntry(obj.routes, source, Object.keys(mcpServers));
+  const daemon = parseDaemonEntry(obj.daemon, source, Object.keys(mcpServers));
 
   const config: CliConfig = {
     mcpServers,
@@ -177,7 +309,239 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
   };
   if (bridge) config.bridge = bridge;
   if (pruning) config.pruning = pruning;
+  if (supervision) config.supervision = supervision;
+  if (routes) config.routes = routes;
+  if (daemon) config.daemon = daemon;
   return config;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function positiveNumber(value: unknown, what: string, source: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new ConfigError(`${source}: "${what}" must be a positive number`);
+  }
+  return value;
+}
+
+function positiveInteger(value: unknown, what: string, source: string): number {
+  if (!Number.isInteger(value) || (value as number) <= 0) {
+    throw new ConfigError(`${source}: "${what}" must be a positive integer`);
+  }
+  return value as number;
+}
+
+function stringList(value: unknown, what: string, source: string): string[] {
+  if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && v.length > 0)) {
+    throw new ConfigError(`${source}: "${what}" must be an array of non-empty strings`);
+  }
+  return value as string[];
+}
+
+/** Validate one supervision rule; `where` names it in an error. */
+function parseSupervisionRule(raw: unknown, where: string, source: string): SupervisionRuleEntry {
+  if (!isPlainObject(raw)) throw new ConfigError(`${source}: "${where}" must be an object`);
+  const out: SupervisionRuleEntry = {};
+  for (const key of ["deadlineMs", "cooldownMs", "cooldownMaxMs"] as const) {
+    if (raw[key] !== undefined) out[key] = positiveNumber(raw[key], `${where}.${key}`, source);
+  }
+  for (const key of [
+    "concurrency",
+    "queueLength",
+    "transientTripAfter",
+    "maxArgumentBytes",
+  ] as const) {
+    if (raw[key] !== undefined) out[key] = positiveInteger(raw[key], `${where}.${key}`, source);
+  }
+  if (raw.maxAttempts !== undefined) {
+    const attempts = positiveInteger(raw.maxAttempts, `${where}.maxAttempts`, source);
+    if (attempts > 2) {
+      throw new ConfigError(
+        `${source}: "${where}.maxAttempts" may not exceed 2; a retry-safe operation gets at most one retry`,
+      );
+    }
+    out.maxAttempts = attempts;
+  }
+  if (raw.backoffMs !== undefined) {
+    const pair = raw.backoffMs;
+    if (
+      !Array.isArray(pair) ||
+      pair.length !== 2 ||
+      !pair.every((v) => typeof v === "number" && Number.isFinite(v) && v >= 0) ||
+      pair[0] > pair[1]
+    ) {
+      throw new ConfigError(
+        `${source}: "${where}.backoffMs" must be [min, max] milliseconds with min <= max`,
+      );
+    }
+    out.backoffMs = [pair[0], pair[1]];
+  }
+  if (raw.daemonRequired !== undefined) {
+    if (typeof raw.daemonRequired !== "boolean") {
+      throw new ConfigError(`${source}: "${where}.daemonRequired" must be a boolean`);
+    }
+    out.daemonRequired = raw.daemonRequired;
+  }
+  if (raw.readOnlyTools !== undefined) {
+    out.readOnlyTools = stringList(raw.readOnlyTools, `${where}.readOnlyTools`, source);
+  }
+  if (
+    out.cooldownMs !== undefined &&
+    out.cooldownMaxMs !== undefined &&
+    out.cooldownMs > out.cooldownMaxMs
+  ) {
+    throw new ConfigError(
+      `${source}: "${where}.cooldownMs" may not exceed "${where}.cooldownMaxMs"`,
+    );
+  }
+  return out;
+}
+
+/** Validate the `supervision` block. A rule may name only a configured server. */
+function parseSupervisionEntry(
+  raw: unknown,
+  source: string,
+  servers: string[],
+): SupervisionEntry | undefined {
+  if (raw === undefined) return undefined;
+  if (!isPlainObject(raw)) throw new ConfigError(`${source}: "supervision" must be an object`);
+  const out: SupervisionEntry = {};
+  if (raw.defaults !== undefined) {
+    out.defaults = parseSupervisionRule(raw.defaults, "supervision.defaults", source);
+  }
+  if (raw.rules !== undefined) {
+    if (!isPlainObject(raw.rules)) {
+      throw new ConfigError(
+        `${source}: "supervision.rules" must be an object keyed by server name`,
+      );
+    }
+    out.rules = {};
+    for (const [name, rule] of Object.entries(raw.rules)) {
+      if (!servers.includes(name)) {
+        throw new ConfigError(
+          `${source}: "supervision.rules.${name}" names a server that is not in "mcpServers"`,
+        );
+      }
+      out.rules[name] = parseSupervisionRule(rule, `supervision.rules.${name}`, source);
+    }
+  }
+  if (raw.stateDir !== undefined) {
+    if (typeof raw.stateDir !== "string" || raw.stateDir.length === 0) {
+      throw new ConfigError(`${source}: "supervision.stateDir" must be a non-empty string`);
+    }
+    out.stateDir = raw.stateDir;
+  }
+  if (raw.eventLog !== undefined) {
+    if (raw.eventLog !== false && (typeof raw.eventLog !== "string" || raw.eventLog.length === 0)) {
+      throw new ConfigError(`${source}: "supervision.eventLog" must be a path or false`);
+    }
+    out.eventLog = raw.eventLog as string | false;
+  }
+  return out;
+}
+
+/** Validate the `routes` block. A route may name only a configured server. */
+function parseRoutesEntry(
+  raw: unknown,
+  source: string,
+  servers: string[],
+): RoutesEntry | undefined {
+  if (raw === undefined) return undefined;
+  if (!isPlainObject(raw)) throw new ConfigError(`${source}: "routes" must be an object`);
+  const out: RoutesEntry = {};
+  if (raw.search !== undefined) {
+    if (!isPlainObject(raw.search)) {
+      throw new ConfigError(`${source}: "routes.search" must be an object`);
+    }
+    const search: NonNullable<RoutesEntry["search"]> = {};
+    for (const key of ["primary", "fallback"] as const) {
+      const value = raw.search[key];
+      if (value === undefined) continue;
+      if (typeof value !== "string" || !servers.includes(value)) {
+        throw new ConfigError(
+          `${source}: "routes.search.${key}" must name a server in "mcpServers"`,
+        );
+      }
+      search[key] = value;
+    }
+    if (search.primary !== undefined && search.primary === search.fallback) {
+      throw new ConfigError(
+        `${source}: "routes.search" names the same server as primary and fallback`,
+      );
+    }
+    out.search = search;
+  }
+  return out;
+}
+
+/** Validate the `daemon` block. */
+function parseDaemonEntry(
+  raw: unknown,
+  source: string,
+  servers: string[],
+): DaemonEntry | undefined {
+  if (raw === undefined) return undefined;
+  if (!isPlainObject(raw)) throw new ConfigError(`${source}: "daemon" must be an object`);
+  const out: DaemonEntry = {};
+  if (raw.port !== undefined) {
+    if (!Number.isInteger(raw.port) || (raw.port as number) < 0 || (raw.port as number) > 65535) {
+      throw new ConfigError(`${source}: "daemon.port" must be a TCP port number`);
+    }
+    out.port = raw.port as number;
+  }
+  if (raw.prewarm !== undefined) {
+    const list = stringList(raw.prewarm, "daemon.prewarm", source);
+    for (const name of list) {
+      if (!servers.includes(name)) {
+        throw new ConfigError(
+          `${source}: "daemon.prewarm" names "${name}", which is not in "mcpServers"`,
+        );
+      }
+    }
+    out.prewarm = list;
+  }
+  return out;
+}
+
+/** The supervision block of a config with every default filled in. */
+export function supervisionSettings(config: CliConfig | undefined): SupervisionSettings {
+  const entry = config?.supervision ?? {};
+  const stateDir = entry.stateDir ?? DEFAULT_STATE_DIR;
+  const out: SupervisionSettings = {
+    defaults: { ...DEFAULT_SUPERVISION_RULE, ...(entry.defaults ?? {}) },
+    rules: entry.rules ?? {},
+    stateDir,
+  };
+  if (entry.eventLog !== false) out.eventLog = entry.eventLog ?? join(stateDir, "events.jsonl");
+  return out;
+}
+
+/** The rule in force for one server: its own entry over the defaults. */
+export function ruleFor(settings: SupervisionSettings, server: string): SupervisionRule {
+  return { ...settings.defaults, ...(settings.rules[server] ?? {}) };
+}
+
+/** The routes block with defaults filled in, dropping a default that names no configured server. */
+export function routeSettings(config: CliConfig | undefined): RouteSettings {
+  const servers = Object.keys(config?.mcpServers ?? {});
+  const search = config?.routes?.search ?? {};
+  const primary = search.primary ?? DEFAULT_ROUTES.search.primary;
+  const defaultFallback = DEFAULT_ROUTES.search.fallback as string;
+  const fallback =
+    search.fallback ?? (servers.includes(defaultFallback) ? defaultFallback : undefined);
+  const out: RouteSettings = { search: { primary } };
+  if (fallback !== undefined && fallback !== primary) out.search.fallback = fallback;
+  return out;
+}
+
+/** The daemon block with defaults filled in. */
+export function daemonConfigSettings(config: CliConfig | undefined): DaemonConfigSettings {
+  const entry = config?.daemon ?? {};
+  const out: DaemonConfigSettings = { prewarm: entry.prewarm ?? [] };
+  if (entry.port !== undefined) out.port = entry.port;
+  return out;
 }
 
 /** Validate the `bridge` block. The roots are checked here so a bad path is a
@@ -220,7 +584,32 @@ function parseBridgeEntry(raw: unknown, source: string): BridgeEntry | undefined
     }
     out.bind = entry.bind;
   }
+  if (entry.authTokenEnv !== undefined) {
+    if (
+      typeof entry.authTokenEnv !== "string" ||
+      !/^[A-Za-z_][A-Za-z0-9_]*$/.test(entry.authTokenEnv)
+    ) {
+      throw new ConfigError(
+        `${source}: "bridge.authTokenEnv" must be the NAME of an environment variable, never a token`,
+      );
+    }
+    out.authTokenEnv = entry.authTokenEnv;
+  }
+  for (const key of ["maxActive", "maxQueued", "maxOutputBytes"] as const) {
+    const value = entry[key];
+    if (value === undefined) continue;
+    if (!Number.isInteger(value) || (value as number) <= 0) {
+      throw new ConfigError(`${source}: "bridge.${key}" must be a positive integer`);
+    }
+    out[key] = value as number;
+  }
   return out;
+}
+
+/** True for the addresses only this machine can reach. */
+export function isLoopback(bind: string): boolean {
+  const host = bind.trim().toLowerCase();
+  return host === "localhost" || host === "::1" || host === "[::1]" || host.startsWith("127.");
 }
 
 /** The bridge block of a config, with defaults filled in. */
