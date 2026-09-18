@@ -66,7 +66,7 @@
 param(
     [ValidateSet('install', 'status', 'repair', 'watchdog', 'rollback', 'uninstall', 'pause', 'resume')]
     [string]$Action = 'status',
-    [string]$Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$Root = '',
     [string]$Node = '',
     [string]$Config = (Join-Path $env:USERPROFILE '.agents\mcp-cli.json'),
     [int]$DaemonPort = 8791,
@@ -84,6 +84,14 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2
 
+# The default root is resolved here and not in the parameter list: under
+# `powershell -File` the automatic variables are empty while parameters bind,
+# so a default expression that reads $PSScriptRoot fails before the body runs.
+$ScriptPath = $MyInvocation.MyCommand.Path
+if ($Root -eq '') {
+    $Root = (Resolve-Path (Join-Path (Split-Path -Parent $ScriptPath) '..\..')).Path
+}
+
 $TaskDaemon = "$TaskPrefix-daemon"
 $TaskBridge = "$TaskPrefix-bridge"
 $TaskWatchdog = "$TaskPrefix-watchdog"
@@ -97,7 +105,6 @@ $ShimDaemon = Join-Path $ShimDir "$TaskPrefix-daemon-hidden.vbs"
 $ShimBridge = Join-Path $ShimDir "$TaskPrefix-bridge-hidden.vbs"
 $ShimWatchdog = Join-Path $ShimDir "$TaskPrefix-watchdog-hidden.vbs"
 $ShimBridgePs1 = Join-Path $ShimDir "$TaskPrefix-bridge.ps1"
-$ScriptPath = $MyInvocation.MyCommand.Path
 
 function Write-Log {
     param([string]$Line)
