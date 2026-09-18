@@ -140,8 +140,18 @@ function toTable(rows: Array<Record<string, unknown>>): string {
  * digest addressable; under every other outcome the text alone is the answer,
  * so a plain string is returned and existing callers are unchanged.
  */
-export function reencode(text: string, format: "raw" | "compact" | "table", note: (m: string) => void, env: EncodeEnv): string;
-export function reencode(text: string, format: Format, note: (m: string) => void, env: EncodeEnv): string | SampledText;
+export function reencode(
+  text: string,
+  format: "raw" | "compact" | "table",
+  note: (m: string) => void,
+  env: EncodeEnv,
+): string;
+export function reencode(
+  text: string,
+  format: Format,
+  note: (m: string) => void,
+  env: EncodeEnv,
+): string | SampledText;
 export function reencode(
   text: string,
   format: Format,

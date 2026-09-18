@@ -160,7 +160,11 @@ function keptText(encoding: SampleEncoding, first: number, last: number, digest:
   const items = lines.slice(fixedLines);
   const head = lines.slice(0, fixedLines).concat(items.slice(0, first));
   const tail = items.slice(items.length - last);
-  const handle = sampleHandle(encoding.items.length - (first + last), encoding.items.length, digest);
+  const handle = sampleHandle(
+    encoding.items.length - (first + last),
+    encoding.items.length,
+    digest,
+  );
   return [...head, handle, ...tail].join("\n");
 }
 

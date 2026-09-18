@@ -61,15 +61,9 @@ describe("searchStored chunk fidelity", () => {
   });
 
   it("counts the separators between several kept chunks inside the budget exactly", () => {
-    const text = [
-      "needle 1",
-      "filler",
-      "filler",
-      "needle 2",
-      "filler",
-      "filler",
-      "needle 3",
-    ].join("\n\n");
+    const text = ["needle 1", "filler", "filler", "needle 2", "filler", "filler", "needle 3"].join(
+      "\n\n",
+    );
     // Three 8-character chunks and two 18-character separators cost exactly
     // 8*3 + (18+2)*2 = 64 characters: at 64 all three come back, and at one
     // less the third no longer fits, so the bound is the real one, not loose.

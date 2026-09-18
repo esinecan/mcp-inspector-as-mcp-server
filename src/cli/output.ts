@@ -140,10 +140,14 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
     // the render created is noted instead: the addressability the handles
     // carried has to survive the narrowing, on the note sink.
     if (pruned.digest !== undefined) {
-      opts.note(`--intent narrowed a spilled result; mcp-cli spill get ${pruned.digest} reads it whole`);
+      opts.note(
+        `--intent narrowed a spilled result; mcp-cli spill get ${pruned.digest} reads it whole`,
+      );
     }
     for (const digest of sampled) {
-      opts.note(`--intent narrowed a sampled result; mcp-cli spill get ${digest} reads the whole table`);
+      opts.note(
+        `--intent narrowed a sampled result; mcp-cli spill get ${digest} reads the whole table`,
+      );
     }
     return searchStored(widest.join("\n"), opts.intent, {
       budgetBytes: opts.intentBudget ?? DEFAULT_PRUNING.intentBudget,

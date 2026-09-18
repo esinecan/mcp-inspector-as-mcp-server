@@ -269,9 +269,7 @@ describe("the pruning block", () => {
   });
 
   it("lets the file override each key and keep the rest", () => {
-    const settings = pruningSettings(
-      parseConfig({ pruning: { thresholdBytes: 4000 } }, "t"),
-    );
+    const settings = pruningSettings(parseConfig({ pruning: { thresholdBytes: 4000 } }, "t"));
     expect(settings.thresholdBytes).toBe(4000);
     expect(settings.headBytes).toBe(2000);
   });

@@ -37,7 +37,14 @@ import {
 import { resolveAddress, splitAddress } from "./match.js";
 import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
-import { Output, columnWidth, firstLine, oneLine, renderContent, type RenderOptions } from "./output.js";
+import {
+  Output,
+  columnWidth,
+  firstLine,
+  oneLine,
+  renderContent,
+  type RenderOptions,
+} from "./output.js";
 import { cmdBridge } from "./bridge.js";
 import { cmdDaemon, daemonEnabled, daemonSettings } from "./daemon.js";
 import { DaemonSessions } from "./daemon-session.js";

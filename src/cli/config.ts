@@ -262,9 +262,7 @@ function parsePruningEntry(raw: unknown, source: string): PruningEntry | undefin
       typeof entry.format !== "string" ||
       !FORMATS.includes(entry.format as (typeof FORMATS)[number])
     ) {
-      throw new ConfigError(
-        `${source}: "pruning.format" must be one of ${FORMATS.join("|")}`,
-      );
+      throw new ConfigError(`${source}: "pruning.format" must be one of ${FORMATS.join("|")}`);
     }
     out.format = entry.format as PruningEntry["format"];
   }

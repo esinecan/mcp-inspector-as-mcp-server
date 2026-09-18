@@ -977,4 +977,3 @@ describe("--intent over a sampled result", () => {
     expect(rendered).toContain("| 1 | uid-17 | zzq ppp");
   });
 });
-
