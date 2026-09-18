@@ -16,7 +16,7 @@ import { FORMATS } from "./args.js";
  * the handle line, the 2:1 split, the shrink floor, the refusal rule, the
  * digest contract, and the two-handle case the prune after it produces.
  *
- * The later groups are the adversarial ones: the 5-item and ratio boundaries
+ * The later groups are the adversarial ones: the 10-item and ratio boundaries
  * of the refusal rule, a keep-set that cannot fit, content that imitates a
  * handle line, multi-byte cells, payloads with no table in them, and the
  * two-handle render where sampling and pruning each spill their own text.
@@ -206,7 +206,7 @@ describe("the kept runs", () => {
 });
 
 describe("the refusal rule", () => {
-  it("refuses fewer than five items and returns the lossless encoding whole", () => {
+  it("refuses fewer than ten items and returns the lossless encoding whole", () => {
     const { store, puts } = fakeStore();
     const e = encoding(uniform(4));
     const result = sampleText(e, { thresholdBytes: 1 }, store);
@@ -469,13 +469,25 @@ describe("the refusal boundaries", () => {
     expect(refuseSample(items(4))).toBe("4 items is too few to have a pattern");
   });
 
-  it("refuses five items even with a constant field, because one in five is above one in ten", () => {
-    // The count rule admits five, but a field repeated in every one of five
-    // items still has a distinct ratio of 1/5, so no key reaches 0.1 and the
-    // near-unique rule refuses. Nine items is the same; ten is not.
-    expect(refuseSample(items(5))).toBe("every field is near-unique across the items");
-    expect(refuseSample(items(9))).toBe("every field is near-unique across the items");
+  it("refuses nine items by count and admits ten, the first count the ratio rule can pass", () => {
+    // A field repeated in every one of nine items still has a distinct ratio
+    // of 1/9, above one in ten, so nine could never sample even if the count
+    // rule admitted it; the count rule says so first, in its own words. Ten is
+    // the first count where one constant field reaches the ratio.
+    expect(refuseSample(items(5))).toBe("5 items is too few to have a pattern");
+    expect(refuseSample(items(9))).toBe("9 items is too few to have a pattern");
     expect(refuseSample(items(10))).toBeUndefined();
+  });
+
+  it("samples ten items into a head, a handle and a tail, so the minimum is a working one", () => {
+    const { store, puts } = fakeStore();
+    const e = encoding(items(10));
+    const r = sampleText(e, { thresholdBytes: 1 }, store);
+    expect(r.refused).toBeUndefined();
+    expect(r.total).toBe(10);
+    expect(r.kept + r.withheld).toBe(10);
+    expect(r.withheld).toBeGreaterThan(0);
+    expect(puts).toEqual([e.text]);
   });
 
   it("samples exactly at a distinct ratio of one in ten and refuses just above it", () => {
@@ -661,12 +673,13 @@ describe("the keep-set that cannot fit", () => {
   it("keeps the two-handle case truthful when a refusal, not a sample, produced the oversize text", () => {
     const { store, puts, digests } = recordingStore();
     const notes: string[] = [];
-    // Six unique-field records: too few repeated signal to sample, and each
-    // row large enough that the table is over the budget, so the prune after
-    // the refusal is the only spill and the only handle.
-    const rows = Array.from({ length: 6 }, (_, i) => ({
+    // Twelve records, every field unique: enough to pass the count rule, no
+    // repeated signal to sample, and each row large enough that the table is
+    // over the budget, so the prune after the refusal is the only spill and
+    // the only handle.
+    const rows = Array.from({ length: 12 }, (_, i) => ({
       uid: `uid-${i}`,
-      pad: "r".repeat(80),
+      pad: String(i).padStart(80, "r"),
     }));
     const e = encoding(rows);
     const rendered = renderContent(

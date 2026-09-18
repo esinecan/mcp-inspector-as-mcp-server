@@ -468,7 +468,7 @@ unchanged under every format.
 `sample` is the one format that emits fewer items rather than fewer bytes per
 item. It renders the lossless table first and hands it back whole when it fits
 under `pruning.thresholdBytes`. When it does not, and the array holds at least
-five items with a field that repeats in nine of every ten, a run from the start
+ten items with a field that repeats in nine of every ten, a run from the start
 and a run from the end stay inline and one handle line sits between them:
 
 ```
@@ -481,7 +481,7 @@ and a run from the end stay inline and one handle line sits between them:
 
 `mcp-cli spill get <digest>` returns the whole table byte for byte. Every kept
 line is a line of the lossless table, in its original order. When there is no
-repeated field to sample on, or fewer than five items, sampling is refused, the
+repeated field to sample on, or fewer than ten items, sampling is refused, the
 whole table is printed and the note on stderr says so. When even the minimum
 keep-set is over the threshold, the prune that runs after adds its own byte
 handle; each handle names the digest of exactly what its own spill entry holds.

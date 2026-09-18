@@ -51,7 +51,7 @@ export interface SampleResult {
 }
 
 /** Fewer items than this and there is no pattern to sample. */
-const MIN_ITEMS = 5;
+const MIN_ITEMS = 10;
 
 /**
  * The pieces of one lossless encoding the shrink needs, each priced once.
@@ -130,10 +130,13 @@ function sampleHandle(withheld: number, total: number, digest: string): string {
 /**
  * Why this array must not be sampled, or undefined when it may be.
  *
- * The two judgements are about the items alone: five is the smallest count
- * with a pattern worth keeping head and tail of, and an array in which no
- * field repeats in at least nine items out of ten is a set of unique entities
- * whose dropped members differ from every kept one in every field.
+ * The two judgements are about the items alone. Ten is the smallest count
+ * that can pass the ratio rule at all: a field repeated in every item of a
+ * shorter array still has one distinct value in fewer than ten, which is above
+ * one in ten, so a smaller minimum would only defer the same refusal to the
+ * second test. An array in which no field repeats in at least nine items out
+ * of ten is a set of unique entities whose dropped members differ from every
+ * kept one in every field.
  */
 export function refuseSample(items: Array<Record<string, unknown>>): string | undefined {
   if (items.length < MIN_ITEMS) {
