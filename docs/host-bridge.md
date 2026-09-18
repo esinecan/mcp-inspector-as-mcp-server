@@ -7,10 +7,23 @@ README carries the short one.
 
 ## Security
 
-There is no authentication and no allowlist. Anything that can reach the socket
-can run any command as you. Use it on one machine, let the Windows firewall
-prompt be the boundary, and do not expose the port to a network you do not
-control.
+There is no allowlist. Anything that can reach the socket with the token can
+run any command as you. Use it on one machine, let the Windows firewall prompt
+be the boundary, and do not expose the port to a network you do not control.
+
+A bridge bound to anything but loopback requires a bearer token on `/exec`.
+`bridge.authTokenEnv` names the environment variable that holds it; the value
+is read once at start, compared in constant time, and never written to the
+config file, the log or a response. `bridge serve` refuses to start on a
+network bind without a token name, or with a name whose variable is unset. A
+loopback bind may go without. The health surfaces need no token, because they
+say nothing a caller could not learn by connecting.
+
+Two commands run at once and eight wait, in order; the ninth is answered 503
+with `Retry-After: 1`, because a host shell that starts every command it is
+sent is a host that can be flattened by a loop. Output is cut at
+`maxOutputBytes` per stream, one mebibyte by default: the bytes past the cap
+are counted, never buffered, and the result says how many were dropped.
 
 ## The path contract
 
@@ -59,7 +72,11 @@ and falls back to the value shown:
     "port": 8790,
     "bind": "0.0.0.0",
     "defaultTimeout": 600,
-    "maxTimeout": 3600
+    "maxTimeout": 3600,
+    "authTokenEnv": "MCP_CLI_BRIDGE_TOKEN",
+    "maxActive": 2,
+    "maxQueued": 8,
+    "maxOutputBytes": 1048576
   }
 }
 ```
@@ -71,6 +88,10 @@ and falls back to the value shown:
 | `port`, `bind` | the socket `bridge serve` listens on |
 | `defaultTimeout` | seconds, used when a request names no timeout |
 | `maxTimeout` | seconds. A request asking for more is clamped to this |
+| `authTokenEnv` | the NAME of the environment variable holding the bearer token. Required when `bind` is not loopback |
+| `maxActive` | commands running at once |
+| `maxQueued` | requests waiting for a slot before the bridge answers 503 |
+| `maxOutputBytes` | bytes kept per stream; the rest is cut and counted |
 
 `--port` and `--bind` override the file. A bad root is a config error at load
 time. The bridge runs on the defaults when the config file is absent, so a box
@@ -89,7 +110,9 @@ mcp-cli bridge exec "type /workspace/hello.txt"
 # exits with the command's own code
 
 mcp-cli bridge serve --port 8790
-# serves POST /exec and nothing else, one log line per request on stderr
+# serves POST /exec and the three health surfaces, one log line per request on stderr
+mcp-cli bridge serve --log C:\Users\you\.agents\mcp-cli-bridge.log
+# the same, with the lines appended to a file; what the scheduled task runs
 
 mcp-cli bridge mcp
 # serves the host_exec tool over stdio, for an MCP client to register
@@ -108,13 +131,16 @@ Start `mcp-cli bridge serve` on the host. From inside the container the host is
 ```bash
 curl -s -X POST http://host.docker.internal:8790/exec \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $MCP_CLI_BRIDGE_TOKEN" \
   -d '{"cmd":"dir /workspace"}'
 # {"exit":0,"stdout":" Directory of /workspace\r\n...","stderr":""}
 ```
 
 The request body is `{cmd, cwd?, stdin?, timeout?}` and the response is
-`{exit, stdout, stderr}`. Any other path or method answers 404. The wire format
-is the one the Python bridge served, so an existing client needs no change.
+`{exit, stdout, stderr, truncated?}`. `GET /health/live`, `GET /health/ready`
+and `GET /status` answer without a token; any other path or method answers
+404. The wire format is the one the Python bridge served, plus the token
+header on a network bind, so an existing client adds one header.
 
 A command that fails is still a 200: its exit code is in `exit`. The other
 statuses mean the request never became a process, and each one carries a JSON
@@ -123,11 +149,14 @@ body of `{"error": "..."}`:
 | Status | Cause |
 | --- | --- |
 | 400 | the body is not JSON |
+| 401 | the bearer token is missing or wrong |
 | 413 | the body is over 4 MB, or the client disconnected part way through |
 | 500 | the body is JSON but not a valid request, or the shell would not start |
+| 503 | `maxActive` commands are running and `maxQueued` are waiting; `Retry-After: 1` |
 
-The server answers all of these and keeps serving. Requests are handled
-concurrently, so one slow command does not hold up the next.
+The server answers all of these and keeps serving. Up to `maxActive` commands
+run at once, so one slow command does not hold up the next, and the rest wait
+in order.
 
 ## Registering the MCP adapter
 
@@ -184,7 +213,8 @@ does not pass through that blocklist.
 - `exec.ts`: `execBridged`, the request checking, the timeout, and the
   process-tree kill.
 - `selftest.ts`: the six cases.
-- `http.ts`: `POST /exec`.
+- `http.ts`: `POST /exec` behind the token and the gate, plus the three health
+  surfaces.
 - `mcp-server.ts`: the `host_exec` tool over stdio.
 
 `src/cli/bridge.ts` holds the four subcommand bodies. The HTTP adapter and the

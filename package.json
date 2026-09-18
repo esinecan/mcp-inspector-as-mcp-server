@@ -12,6 +12,7 @@
   "files": [
     "dist/",
     "bin/",
+    "scripts/",
     "LICENSE",
     "README.md"
   ],

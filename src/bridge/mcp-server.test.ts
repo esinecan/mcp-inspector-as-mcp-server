@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { fleetFrom } from "../cli/fleet.js";
-import { EphemeralSessions } from "../cli/server-session.js";
+import { openSession, type ToolDescriptor, type ToolResult } from "../cli/server-session.js";
+import type { Operation } from "../supervise/operation.js";
 import { hostExecTool } from "./mcp-server.js";
 
 /**
@@ -36,8 +37,8 @@ afterAll(() => {
   rmSync(hostRoot, { recursive: true, force: true });
 });
 
-/** A fleet holding one server: the bridge, launched from the built CLI. */
-function sessions(): EphemeralSessions {
+/** One operation against the bridge, launched from the built CLI and closed after. */
+async function perform<T>(op: Operation): Promise<T> {
   const fleet = fleetFrom(
     {
       mcpServers: {
@@ -50,7 +51,12 @@ function sessions(): EphemeralSessions {
     },
     "default",
   );
-  return new EphemeralSessions(fleet, { timeoutMs: 30000 });
+  const session = await openSession(fleet, "bridge", { timeoutMs: 30000 });
+  try {
+    return (await session.perform(op, 30000)) as T;
+  } finally {
+    await session.close();
+  }
 }
 
 describe("the host_exec tool definition", () => {
@@ -74,14 +80,16 @@ describe("the host_exec tool definition", () => {
 
 describe.runIf(built && onWindows)("the MCP adapter over stdio", () => {
   it("exposes exactly one tool", async () => {
-    const tools = await sessions().run("bridge", (s) => s.listTools());
+    const tools = await perform<ToolDescriptor[]>({ kind: "listTools" });
     expect(tools.map((t) => t.name)).toEqual(["host_exec"]);
   }, 30000);
 
   it("runs a command and returns the JSON result", async () => {
-    const result = await sessions().run("bridge", (s) =>
-      s.callTool("host_exec", { cmd: "type /workspace/hello.txt" }),
-    );
+    const result = await perform<ToolResult>({
+      kind: "callTool",
+      name: "host_exec",
+      args: { cmd: "type /workspace/hello.txt" },
+    });
     const text = result.content?.[0]?.text ?? "";
     const payload = JSON.parse(text) as { exit: number; stdout: string };
     expect(payload.exit).toBe(0);
@@ -89,9 +97,11 @@ describe.runIf(built && onWindows)("the MCP adapter over stdio", () => {
   }, 30000);
 
   it("reports a non-zero exit as a normal result, not a tool error", async () => {
-    const result = await sessions().run("bridge", (s) =>
-      s.callTool("host_exec", { cmd: "exit /b 3" }),
-    );
+    const result = await perform<ToolResult>({
+      kind: "callTool",
+      name: "host_exec",
+      args: { cmd: "exit /b 3" },
+    });
     expect(result.isError).toBeUndefined();
     const payload = JSON.parse(result.content?.[0]?.text ?? "") as { exit: number };
     expect(payload.exit).toBe(3);

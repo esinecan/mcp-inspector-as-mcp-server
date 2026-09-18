@@ -373,6 +373,16 @@ mcp-cli prompts elevated-cmd
 
 mcp-cli prompt elevated-cmd.run_process '{"command":"ls"}'
 
+mcp-cli search "berlin wohnung" --limit 3
+# 1. Wohnung mieten in Berlin ...
+#    https://...
+#    ... snippet ...
+# (Google first; when Google cannot answer, Brave, and stderr says so)
+
+mcp-cli circuits status
+# server   open       google-search  rate_limited  failures=1  until=2026-09-18T15:04:05.000Z  "Google served /sorry/"
+mcp-cli circuits reset google-search
+
 mcp-cli import-claude
 # wrote C:/Users/you/.agents/mcp-cli.json
 # imported 19 servers from C:/Users/you/.claude.json
@@ -392,11 +402,13 @@ Global flags, valid on every command:
 | --- | --- |
 | `--config <path>` | config file to read. Also `MCP_CLI_CONFIG` |
 | `--profile <name>` | blocklist profile. Also `MCP_CLI_PROFILE` |
-| `--json` | one JSON object on stdout instead of text |
-| `--timeout <ms>` | budget for connecting and for each request |
+| `--json` | one JSON object on stdout instead of text; a failure is the error envelope |
+| `--timeout <ms>` | total budget of one operation, queue wait included |
 | `--all` | with `tools`, also show blocked tools, marked |
+| `--limit <n>`, `--provider <name>` | with `search`, how many rows, and one server instead of the route |
 | `--port`, `--bind` | with `bridge serve`, the listening socket |
-| `--port` | with `daemon`, its port. Also `MCP_CLI_DAEMON_PORT`, default 8791 |
+| `--port` | with `daemon`, its port. Also `MCP_CLI_DAEMON_PORT` and `daemon.port`, default 8791 |
+| `--log <path>` | with `daemon serve` and `bridge serve`, append the log there |
 | `--cwd`, `--stdin` | with `bridge exec`, the working directory and standard input |
 | `--help`, `--version` | usage text, version |
 
@@ -411,11 +423,33 @@ and `--out <path>` for the file to write.
 | 1 | the connection failed, or the tool returned an error result |
 | 2 | usage error: unknown command, unknown flag, unknown server, bad config file, or arguments that are not a JSON object |
 | 3 | the profile blocks this tool |
+| 4 | refused before dispatch: a circuit is open, this exact request is excluded, the queue is full, the server needs the daemon and none answers, or the arguments are over the limit |
 
 Results go to stdout. Errors and notes go to stderr, each prefixed with
 `mcp-cli: `. A whole-fleet `mcp-cli tools` exits 0 even when some servers
 failed, because the listing it produced is still useful. Naming one server that
 fails exits 1.
+
+Under `--json` a failure is one JSON object on stdout, `{ok: false, error:
+{class, message, server, operation, attempts, trace, remediation, ...},
+exitCode}`, so a pipeline always reads one object. A successful result is
+printed exactly as before. The classes, the retry rule, the circuits and the
+envelope are in [docs/mcp-cli-supervision.md](docs/mcp-cli-supervision.md).
+
+### search and circuits
+
+`mcp-cli search <query>` runs one web search over the `routes.search` block of
+the config: Google first, and Brave when Google answers with a rate limit, an
+expired login, a stale extractor, or nothing at all. A query Google rejects as
+malformed is not sent on. The rows have one shape from either provider,
+`{title, url, snippet, date?}`, and the JSON outcome names the provider that
+answered, whether it was the fallback, and every attempt with its class.
+
+`mcp-cli circuits status` lists what the supervisor refuses right now: a server
+whose credentials were refused, one that is rate limiting, one whose
+connection failed three times in a row, and any exact request that failed
+structurally. `mcp-cli circuits reset [server]` forgets them, which is the move
+after credentials are renewed.
 
 ### Addressing a tool
 
@@ -497,10 +531,16 @@ so the digest of the sampled table is noted on stderr instead.
 lives somewhere else, usually an agent inside a container that needs a real
 Windows shell.
 
-There is no authentication and no allowlist, so anything that can reach the
-socket can run any command as you. Use it on one machine, let the Windows
-firewall prompt be the boundary, and do not expose the port to a network you do
-not control.
+There is no allowlist, so anything that can reach the socket with the token
+can run any command as you. A bridge bound to anything but loopback requires
+a bearer token on `/exec`: `bridge.authTokenEnv` names the environment
+variable that holds it, the value is read at start and never written to the
+config, the log or a response, and a request without it is answered 401. Two
+commands run at once and eight wait; the ninth is answered 503 with a
+`Retry-After`. Output is cut at `bridge.maxOutputBytes` per stream, one
+mebibyte by default, with the cut counted in `truncated`. Use it on one
+machine, let the Windows firewall prompt be the boundary, and do not expose
+the port to a network you do not control.
 
 One folder has two names. The client says `/workspace`, Windows says
 `C:\Users\you\agent-workspace`. The bridge translates in three places: the
@@ -511,10 +551,12 @@ itself, because the root is followed by a hyphen. A command that runs out of its
 budget returns exit 124 and `timeout after Ns`.
 
 Configuration is a top-level `bridge` object in `~/.agents/mcp-cli.json`, with
-`containerRoot`, `hostRoot`, `port`, `bind`, `defaultTimeout` and `maxTimeout`.
-Every key is optional and the defaults are `/workspace`,
-`<home>\agent-workspace`, 8790, `0.0.0.0`, 600 and 3600. The timeouts are
-seconds. `--port` and `--bind` override the file.
+`containerRoot`, `hostRoot`, `port`, `bind`, `defaultTimeout`, `maxTimeout`,
+`authTokenEnv`, `maxActive`, `maxQueued` and `maxOutputBytes`. Every key is
+optional and the defaults are `/workspace`, `<home>\agent-workspace`, 8790,
+`0.0.0.0`, 600, 3600, none, 2, 8 and 1048576. The timeouts are seconds.
+`--port` and `--bind` override the file. `GET /health/live`, `GET
+/health/ready` and `GET /status` answer without a token.
 
 ```bash
 mcp-cli bridge selftest                            # six path-contract rows, exit 1 on any FAIL
@@ -530,7 +572,8 @@ For OpenHands, start `bridge serve` on the host and post from the container:
 
 ```bash
 curl -s -X POST http://host.docker.internal:8790/exec \
-  -H 'Content-Type: application/json' -d '{"cmd":"dir /workspace"}'
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $MCP_CLI_BRIDGE_TOKEN" \
+  -d '{"cmd":"dir /workspace"}'
 # {"exit":0,"stdout":" Directory of /workspace\r\n...","stderr":""}
 ```
 
@@ -547,8 +590,8 @@ through `mcp-cli call`, so `--profile nobridge` with `"block": ["bridge.*"]`
 exits 3.
 
 A command that fails is still HTTP 200 with its code in `exit`. A body that is
-not JSON answers 400, a body that is JSON but not a valid request answers 500,
-and either way the server keeps serving. Requests run concurrently.
+not JSON answers 400, a missing or wrong token 401, a body that is JSON but not
+a valid request 500, and a full queue 503; either way the server keeps serving.
 
 Full detail, including the config table and the module layout, is in
 [docs/host-bridge.md](docs/host-bridge.md).
@@ -570,9 +613,25 @@ mcp-cli daemon stop                                              # close it all
 
 It listens on `127.0.0.1:8791` and nothing else, because it holds connections to
 servers that already carry your credentials. There is no authentication; the
-loopback bind is the boundary. `--port` and `MCP_CLI_DAEMON_PORT` move it, and
-`mcp-cli daemon serve` runs it in the foreground. The port is not 9847, the
-steering API, and not 8790, the bridge.
+loopback bind is the boundary. `--port`, `MCP_CLI_DAEMON_PORT` and `daemon.port`
+move it, and `mcp-cli daemon serve` runs it in the foreground, which is what the
+scheduled task runs. The port is not 9847, the steering API, and not 8790, the
+bridge.
+
+`daemon.prewarm` names the servers `serve` connects right after it starts
+listening, one at a time, and `GET /health/ready` answers 200 once every one
+has been tried; `GET /health/live` answers as soon as the process does. The
+daemon serialises operations per server for every process that shares it,
+drops a warm session after a connection failure so the next call connects
+fresh, and answers every failure with the class the caller's executor reads.
+
+On Windows, `scripts/windows/mcp-cli-tasks.ps1 -Action install` registers the
+daemon and the bridge as scheduled tasks that start at logon and are checked
+every two minutes by a watchdog task that restarts whichever does not answer;
+the tasks also carry three one-minute restarts, which this Windows build was
+not seen to apply to an exit-code failure. `-Action status`, `repair`,
+`rollback` and `uninstall` do what they say, and every install backs up the
+previous task definitions first.
 
 With no daemon running, every command behaves exactly as it did before: a
 refused connection on 8791 means "no daemon", never a failure. `MCP_CLI_DAEMON=0`
@@ -601,9 +660,12 @@ the era a server answered with. A server edited between two calls exposes its
 new tools on the second one in both modes, which makes the CLI a development
 loop with no reload command.
 
-`src/cli/server-session.ts` holds the one seam, and the two adapters behind it
-are `EphemeralSessions` and `DaemonSessions`. The architecture pass behind the
-current module layout is in
+`src/supervise/executor.ts` holds the one seam. Every command hands it an
+operation, and the two lanes behind it, ephemeral and daemon, perform that
+operation while the executor decides the queue, the deadline, the retry and
+the circuits. That module is described in
+[docs/mcp-cli-supervision.md](docs/mcp-cli-supervision.md); the architecture
+pass behind the module layout is in
 [docs/mcp-cli-architecture-pass.md](docs/mcp-cli-architecture-pass.md).
 
 ## Architecture
@@ -620,23 +682,31 @@ current module layout is in
 │   │   ├── path-map.ts    # /workspace <-> C:\...gent-workspace, three rewrites
 │   │   ├── exec.ts        # run one command through cmd.exe, exit 124 on timeout
 │   │   ├── selftest.ts    # the six path-contract cases
-│   │   ├── http.ts        # POST /exec
+│   │   ├── http.ts        # POST /exec with a bearer token, a 2+8 gate and health
 │   │   └── mcp-server.ts  # the host_exec tool over stdio
 │   ├── daemon/       # the mcp-cli warm daemon
 │   │   ├── registry.ts    # WarmServers: one live connection per server name
-│   │   ├── core.ts        # check, refuse, dispatch the seven operations
-│   │   └── http.ts        # POST /op, GET /status, POST /shutdown, loopback only
+│   │   ├── core.ts        # check, queue, dispatch, classify, drop a dead session
+│   │   └── http.ts        # POST /op, GET /status, /health/live, /health/ready
+│   ├── supervise/    # the executor: queue, deadline, classes, retries, circuits
+│   │   ├── executor.ts    # McpExecutor.execute(server, operation)
+│   │   ├── classify.ts, policy.ts, circuits.ts, store.ts, queue.ts, events.ts
+│   │   └── ephemeral-lane.ts, daemon-lane.ts, scripted-lane.ts
+│   ├── search/       # the SearchProvider port, Google, Brave, and the route
 │   └── cli/          # mcp-cli
 │       ├── index.ts          # command bodies
 │       ├── fleet.ts          # servers + profile; answers without connecting
-│       ├── server-session.ts # the seam, and the EphemeralSessions adapter
-│       ├── daemon-session.ts # DaemonSessions: the seam's second adapter
-│       ├── daemon.ts         # daemon start, stop, status, serve
+│       ├── server-session.ts # one open session, and performOnClient
+│       ├── daemon.ts         # daemon start, stop, status, serve, prewarm
+│       ├── search.ts         # mcp-cli search
+│       ├── circuits.ts       # mcp-cli circuits status | reset
 │       ├── output.ts         # text or JSON, one place that writes
 │       ├── errors.ts         # each failure carries its exit code
-│       ├── config.ts         # config file shape, ${ENV}, glob, profiles
+│       ├── config.ts         # config file shape, ${ENV}, glob, profiles, supervision
 │       ├── bridge.ts         # the four bridge subcommands
 │       ├── args.ts, input.ts, match.ts, import.ts
+├── scripts/windows/
+│   └── mcp-cli-tasks.ps1 # install, status, repair, watchdog, rollback the two services
 ├── bin/
 │   └── mcp-steer.mjs # CLI tool for human steering
 ├── tests/            # Integration test scripts (run with npx tsx)
@@ -668,6 +738,13 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+- Put one executor between every command and every server: operations instead of callbacks, one queue per server with the wait counted against the deadline, eight failure classes, one retry for reads and none for anything that may write, server and request circuits persisted across processes, a JSONL event log with trace ids, a `--json` failure envelope, and exit code 4 for a refusal before dispatch. See [docs/mcp-cli-supervision.md](docs/mcp-cli-supervision.md)
+- Added `mcp-cli search`: Google first, Brave when Google cannot answer, one row shape from either, and `mcp-cli circuits status|reset`
+- The daemon prewarms the servers `daemon.prewarm` names, serialises per server, drops a dead warm session, answers `/health/live` and `/health/ready`, and logs to a file with `--log`
+- The bridge requires a bearer token on a network bind (`bridge.authTokenEnv`), runs two commands at once with eight queued, cuts output at `bridge.maxOutputBytes`, and answers `/health/live`, `/health/ready` and `/status`
+- Added `scripts/windows/mcp-cli-tasks.ps1`: the daemon and the bridge as supervised scheduled tasks with a two-minute watchdog, backups and rollback
+- The `sample` format's minimum is ten items, the count its ratio rule already implied
+- `npm run format:check` checks files again on Windows
 - Added `mcp-cli daemon`: an explicitly started, loopback-only daemon on port 8791 that keeps one live connection per server, so a stdio server keeps its own state between two calls. The tool list is never cached, and the profile blocklist is enforced in both processes. See [docs/mcp-cli-daemon.md](docs/mcp-cli-daemon.md)
 - Added `mcp-cli bridge`: a zero-auth host exec bridge with a `/workspace` path contract, served either as `POST /exec` over HTTP or as the `host_exec` MCP tool over stdio. See [docs/host-bridge.md](docs/host-bridge.md)
 - Added the `negotiation` connection parameter for client-side protocol-era negotiation (`legacy` / `auto` / pinned revision)

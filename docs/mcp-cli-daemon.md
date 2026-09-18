@@ -43,33 +43,33 @@ take longer; a legacy server additionally keeps its `initialize` handshake.
 
 ## The seam
 
-`src/cli/server-session.ts` holds two interfaces:
+`src/supervise/executor.ts` holds the one seam. A command hands the executor
+an operation as data, one of the seven kinds below, and never a callback,
+because the executor may retry a read and must never replay a write:
 
 ```ts
-interface SessionProvider {
-  run<T>(serverName: string, fn: (session: ServerSession) => Promise<T>): Promise<T>;
-}
-
-interface ServerSession {
-  readonly info: ConnectionInfo;
-  listTools(): Promise<ToolDescriptor[]>;
-  callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>;
-  listResources(): Promise<ResourceDescriptor[] | null>;
-  readResource(uri: string): Promise<ResourceResult>;
-  listPrompts(): Promise<PromptDescriptor[] | null>;
-  getPrompt(name: string, args: Record<string, string>): Promise<PromptResult>;
-}
+type Operation =
+  | { kind: "info" }
+  | { kind: "listTools" }
+  | { kind: "callTool"; name: string; args: Record<string, unknown> }
+  | { kind: "listResources" }
+  | { kind: "readResource"; uri: string }
+  | { kind: "listPrompts" }
+  | { kind: "getPrompt"; name: string; args: Record<string, string> };
 ```
 
-Every command goes through `SessionProvider.run`. No command builds a transport,
-holds an SDK `Client`, or passes a timeout. The capability checks are inside the
-session: a server with no resources capability makes `listResources` return
-null.
+No command builds a transport, holds an SDK `Client`, or passes a timeout. The
+capability checks are inside `performOnClient` in `src/cli/server-session.ts`,
+which both the ephemeral lane and the daemon use to turn an operation into an
+SDK call: a server with no resources capability makes `listResources` return
+null in both.
 
-There are two adapters. `EphemeralSessions` connects, runs the callback and
-disconnects. `DaemonSessions` forwards each of the seven operations to the
-daemon over loopback HTTP and returns the same result shapes. No command changed
-when the daemon was added.
+There are two lanes behind the executor. The ephemeral lane launches the
+server in this process and keeps the session until the command ends. The
+daemon lane forwards each operation to the daemon over loopback HTTP and
+returns the same result shapes. The executor's queue, deadline, classes,
+retries and circuits are the same over either lane, and are described in
+[mcp-cli-supervision.md](mcp-cli-supervision.md).
 
 The other half of the CLI needs no daemon at all. `src/cli/fleet.ts` answers
 which servers exist, which name the user meant and what the profile blocks, with
@@ -87,20 +87,24 @@ const ephemeral = new EphemeralSessions(fleet, { timeoutMs: args.timeoutMs });
 sessions = new DaemonSessions({ host, port, configPath, profile, fallback: ephemeral });
 ```
 
-Which one runs is settled by the first request of each `run`, not at
+Which one runs is settled by the first operation of each run, not at
 construction. There is no synchronous way to ask whether a TCP port is
 listening, and a refused connection has to mean "no daemon" rather than
-"failure". So `DaemonSessions.run` sends one `info` request first. Three answers
-send the run to the fallback and nothing is reported to the user:
+"failure". Three answers send the operation to the ephemeral lane and nothing
+is reported to the user:
 
 - the connection is refused (`ECONNREFUSED` and its neighbours),
 - the daemon serves a different config file,
-- `MCP_CLI_DAEMON=0` is set, in which case the daemon adapter is never built.
+- `MCP_CLI_DAEMON=0` is set, in which case the daemon lane is never built.
 
-A connection lost *after* that first request is a real failure and is reported
-as one. By then the callback may already have changed something on the server,
-and silently running it a second time against a fresh process would be worse
-than an error.
+Once the daemon is found absent, every later operation of the run skips it. A
+server whose rule says `daemonRequired: true` is not launched here instead: the
+operation is refused with `daemon_required` and exit code 4, because a server
+that holds a browser or a rate-limited login must not run twice.
+
+A connection lost *after* an operation was dispatched is a real failure and is
+reported as one. A read is tried once more on a fresh connection; a call to a
+tool that may write is not, because the daemon may already have delivered it.
 
 ## Lifecycle
 
@@ -114,12 +118,21 @@ than an error.
 3. A request for a cold server connects it; a request for a warm one touches it
    and uses it. Two requests that arrive together launch one process, because
    the store holds the in-flight connect and hands both callers the same
-   promise.
+   promise. Two requests for the same server are answered one at a time, in
+   order: the daemon holds one gate per server with the `concurrency` and
+   `queueLength` of that server's supervision rule, and a request whose budget
+   passes while it waits is refused as a `timeout` with `dispatched: false`.
 4. A config file whose mtime is newer than a warm entry drops that entry and
    connects again, because a changed `command` or `url` means the warm
    connection points at the wrong thing. The file is re-read at the same time,
    so an edited profile takes effect with no daemon restart.
-5. `mcp-cli daemon stop` asks the daemon to close every warm server and give up
+5. A warm session whose connection fails is dropped at once, so the next
+   request connects fresh instead of talking to a dead process.
+6. Right after it starts listening, `serve` connects every server named in
+   `daemon.prewarm`, one at a time. `GET /health/ready` answers 503 until each
+   has been tried, then 200 with the outcome per server; a prewarm that fails
+   does not stop the daemon.
+7. `mcp-cli daemon stop` asks the daemon to close every warm server and give up
    the port, and waits until the port goes quiet.
 
 The CLI process still exits after one call. Only the server connections stay
@@ -132,6 +145,7 @@ mcp-cli daemon start     # launch it, wait for it, print pid and log path
 mcp-cli daemon status    # what it holds; exit 1 when nothing is running
 mcp-cli daemon stop      # close every warm server and release the port
 mcp-cli daemon serve     # run it in the foreground, as bridge serve does
+mcp-cli daemon serve --log ~/.agents/mcp-cli-daemon.log   # what the scheduled task runs
 ```
 
 `status` prints one row per warm server:
@@ -139,6 +153,7 @@ mcp-cli daemon serve     # run it in the foreground, as bridge serve does
 ```
 daemon   running on 127.0.0.1:8791 (pid 26596, up 41s)
 config   C:\Users\you\.agents\mcp-cli.json
+ready    yes  prewarm: cortex=warm, google-search=warm
 cortex         stdio  legacy  warm 33s  idle 26s
 google-search  http   modern  warm 6s   idle 5s
 ```
@@ -225,12 +240,19 @@ CLI, not a public surface, and it is described here so a failure in the log can
 be read.
 
 ```
-POST /op        {config, profile, server, op, timeoutMs?, name?, args?, promptArgs?, uri?}
-                -> 200 {result}
-                -> 4xx/5xx {error, code}
-GET  /status    -> 200 {ok, pid, bind, port, uptimeSeconds, config, servers[]}
-POST /shutdown  -> 200 {ok, pid}
+POST /op            {config, profile, server, op, timeoutMs?, trace?, name?, args?, promptArgs?, uri?}
+                    -> 200 {result}
+                    -> 4xx/5xx {error, code, class?, reason?, retryAfterMs?, remediation?, dispatched?}
+GET  /status        -> 200 {ok, pid, bind, port, uptimeSeconds, config, ready, prewarm, servers[], queues, circuits}
+GET  /health/live   -> 200 {ok, pid, uptimeSeconds}
+GET  /health/ready  -> 200 | 503 {ready, prewarm, pid}
+POST /shutdown      -> 200 {ok, pid}
 ```
+
+`class` is the failure class the caller's executor trusts, `reason` the refusal
+reason when the daemon refused before dispatch, and `dispatched: false` says
+the server was never asked, so the caller does not have to treat a queued
+write that timed out as one whose outcome is unknown.
 
 `code` is what the CLI turns back into an exit code:
 
@@ -246,12 +268,41 @@ POST /shutdown  -> 200 {ok, pid}
 ```
 src/daemon/
   registry.ts   # WarmServers: one live connection per server name
-  core.ts       # handleOp: check, refuse, dispatch. The one error-shaping point
-  http.ts       # POST /op, GET /status, POST /shutdown, on loopback
+  core.ts       # handleOp: check, queue, dispatch, classify. The one error-shaping point
+  http.ts       # POST /op, GET /status, GET /health/*, POST /shutdown, on loopback
 src/cli/
-  daemon.ts          # start, stop, status, serve, and where the port comes from
-  daemon-session.ts  # DaemonSessions: the second SessionProvider adapter
+  daemon.ts     # start, stop, status, serve with prewarm and --log
+src/supervise/
+  daemon-lane.ts  # the lane that forwards one operation per request
+scripts/windows/
+  mcp-cli-tasks.ps1  # the scheduled tasks, the watchdog, backup and rollback
 ```
+
+## Running it as a service on Windows
+
+`scripts/windows/mcp-cli-tasks.ps1 -Action install` registers three scheduled
+tasks for the interactive user: `mcp-cli-daemon`, `mcp-cli-bridge` and
+`mcp-cli-watchdog`. The two services start at logon, are set to restart three
+times a minute apart when they fail, and start when available if a trigger
+was missed. The action is a `wscript.exe` shim that waits for the node process
+and returns its exit code, so the task lives exactly as long as the process; a
+console action would flash a window at every start, and a detached child
+would give the scheduler nothing to watch.
+
+The watchdog is the recovery that was seen to work. On this Windows 11 build
+the scheduler's restart-on-failure did not rerun a task whose action exited
+non-zero, whether the node process was killed or a probe task ran `cmd /c
+exit 1`; the setting evidently covers a failure to launch the action, not the
+action failing. It is configured as specified and costs nothing. The watchdog
+runs every two minutes, probes `/health/ready` on the daemon and
+`/health/live` on the bridge, and ends, kills and restarts a service that does
+not answer; a killed bridge was back within four seconds of the next tick. It
+logs one line per tick, so a log that stops growing means the watchdog itself
+stopped. `-Action pause` makes it look and not act. Every install writes the previous task
+definitions and shims to `~/.agents/mcp-cli-tasks/backup/<stamp>/`, and
+`-Action rollback` restores the newest one. `-Action status` prints the tasks,
+the ports and the node processes; `-Action repair` runs the watchdog once,
+aloud.
 
 `src/daemon/` reads `src/cli/config.ts` and `src/cli/fleet.ts` rather than
 carrying its own copy of the config rules. That is what makes the second
