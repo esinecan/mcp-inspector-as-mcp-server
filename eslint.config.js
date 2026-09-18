@@ -7,7 +7,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   eslintConfigPrettier,
   {
-    ignores: ["dist/", "node_modules/", "tests/", "bin/"],
+    ignores: ["dist/", "node_modules/", "tests/", "bin/", "src/__fixtures__/"],
   },
   {
     rules: {

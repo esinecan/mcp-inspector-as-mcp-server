@@ -81,9 +81,3 @@ export function targetOf(op: Operation): string | undefined {
       return undefined;
   }
 }
-
-/** `server.tool` for a call, `server` otherwise: the address a person reads. */
-export function addressOf(server: string, op: Operation): string {
-  const target = targetOf(op);
-  return target === undefined ? server : `${server}.${target}`;
-}

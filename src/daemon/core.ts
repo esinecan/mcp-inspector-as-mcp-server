@@ -269,6 +269,7 @@ async function dispatch(
           reason: "queue_full" satisfies RefusalReason,
           message: `${request.server}: ${err.message}; not queued`,
           remediation: "Wait and try again; the daemon's queue drains in order.",
+          notDispatched: true,
         });
       }
       const waited = err instanceof QueueTimeout ? err.waitedMs : Date.now() - started;
@@ -278,6 +279,7 @@ async function dispatch(
         {
           class: "timeout",
           message: `${request.server}: the budget of ${request.timeoutMs}ms passed after ${waited}ms in the daemon's queue`,
+          notDispatched: true,
         },
       );
     }

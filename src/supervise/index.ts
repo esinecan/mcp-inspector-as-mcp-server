@@ -5,7 +5,7 @@
  */
 
 export { McpExecutor, type ExecuteOptions, type Executed, type CircuitRow } from "./executor.js";
-export { type Operation, type OperationKind, addressOf, targetOf } from "./operation.js";
+export { type Operation, type OperationKind, targetOf } from "./operation.js";
 export {
   SupervisedError,
   plainEnvelope,

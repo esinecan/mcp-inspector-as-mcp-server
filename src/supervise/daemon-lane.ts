@@ -9,7 +9,7 @@
  * from the message twice.
  */
 
-import { BlockedError, CliError, UsageError } from "../cli/errors.js";
+import { BlockedError, UsageError } from "../cli/errors.js";
 import {
   ClassifiedError,
   classFromKind,
@@ -52,10 +52,12 @@ interface DaemonAnswer {
   reason?: string;
   retryAfterMs?: number;
   remediation?: string;
+  dispatched?: boolean;
 }
 
 export class DaemonLane implements Lane {
   readonly name = "daemon";
+  readonly enforcesBudget = true;
 
   constructor(private readonly options: DaemonLaneOptions) {}
 
@@ -121,6 +123,7 @@ export class DaemonLane implements Lane {
           ...(answer.retryAfterMs !== undefined ? { retryAfterMs: answer.retryAfterMs } : {}),
           ...(answer.remediation !== undefined ? { remediation: answer.remediation } : {}),
           ...(answer.reason !== undefined ? { reason: answer.reason as RefusalReason } : {}),
+          ...(answer.dispatched === false ? { notDispatched: true } : {}),
         });
         throw classified;
       }
@@ -131,9 +134,4 @@ export class DaemonLane implements Lane {
   async invalidate(): Promise<void> {}
 
   async close(): Promise<void> {}
-}
-
-/** Whether an error is one of the CLI's own control-flow errors, to pass through untouched. */
-export function isControlFlow(err: unknown): err is CliError {
-  return err instanceof CliError;
 }

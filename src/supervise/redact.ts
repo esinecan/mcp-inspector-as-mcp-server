@@ -19,7 +19,7 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]"],
   // key=value and key: value forms whose key names a secret.
   [
-    /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd|pwd|authorization|auth[_-]?token|token|key)\s*[=:]\s*)["']?[^\s"',;&]{4,}["']?/gi,
+    /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd|pwd|authorization|auth[_-]?token|token|key)["']?\s*[=:]\s*)["']?[^\s"',;&]{4,}["']?/gi,
     "$1[redacted]",
   ],
   // Long opaque strings: hex digests, base64 blobs, JWTs.

@@ -51,6 +51,12 @@ export interface Classified {
   code?: string | number;
   /** For `blocked`: why the supervisor refused, when a daemon passed that on. */
   reason?: RefusalReason;
+  /**
+   * True when the failure happened before the server was asked, so the
+   * question of replay safety does not arise: a queue refusal, a deadline
+   * that passed while queued.
+   */
+  notDispatched?: boolean;
 }
 
 /** A failure that already knows its class. Lanes and providers throw these. */
@@ -60,6 +66,7 @@ export class ClassifiedError extends Error {
   readonly remediation?: string;
   readonly code?: string | number;
   readonly reason?: RefusalReason;
+  readonly notDispatched?: boolean;
 
   constructor(classified: Classified) {
     super(classified.message);
@@ -68,6 +75,7 @@ export class ClassifiedError extends Error {
     if (classified.remediation !== undefined) this.remediation = classified.remediation;
     if (classified.code !== undefined) this.code = classified.code;
     if (classified.reason !== undefined) this.reason = classified.reason;
+    if (classified.notDispatched) this.notDispatched = true;
   }
 
   toClassified(): Classified {
@@ -76,6 +84,7 @@ export class ClassifiedError extends Error {
     if (this.remediation !== undefined) out.remediation = this.remediation;
     if (this.code !== undefined) out.code = this.code;
     if (this.reason !== undefined) out.reason = this.reason;
+    if (this.notDispatched) out.notDispatched = true;
     return out;
   }
 }

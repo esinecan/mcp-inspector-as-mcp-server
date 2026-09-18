@@ -17,7 +17,7 @@
 import type { Fleet } from "../cli/fleet.js";
 import { CliError } from "../cli/errors.js";
 import { ruleFor, type SupervisionRule, type SupervisionSettings } from "../cli/config.js";
-import { withTimeout, type ToolDescriptor } from "../cli/server-session.js";
+import { ServerError, withTimeout, type ToolDescriptor } from "../cli/server-session.js";
 import {
   classifyResult,
   classifyThrown,
@@ -51,6 +51,9 @@ import {
 import { Gate, Gates, QueueFull, QueueTimeout } from "./queue.js";
 import { digestOf, errorDigest } from "./redact.js";
 import { memoryStateStore, type StateStore } from "./store.js";
+
+/** How long past its budget a lane that enforces the budget itself may take to answer. */
+const LANE_GRACE_MS = 1500;
 
 export interface ExecuteOptions {
   /** Total budget, queue wait included. The rule's deadline when absent. */
@@ -344,7 +347,15 @@ export class McpExecutor {
           });
         // The profile and the daemon's usage checks are the CLI's own control
         // flow, not a server failure; they pass through with their exit code.
-        if (err instanceof CliError && !(err instanceof SupervisedError)) throw err;
+        // A ServerError is a server failure wearing an exit code, and is
+        // classified like any other.
+        if (
+          err instanceof CliError &&
+          !(err instanceof SupervisedError) &&
+          !(err instanceof ServerError)
+        ) {
+          throw err;
+        }
         thrown = err;
       }
       const ms = this.now() - attemptStarted;
@@ -404,7 +415,11 @@ export class McpExecutor {
 
       let failure = classifyThrown(thrown);
       let cause: FailureClass | undefined;
-      if (safety !== "safe" && (failure.class === "timeout" || failure.class === "transient")) {
+      if (
+        safety !== "safe" &&
+        !failure.notDispatched &&
+        (failure.class === "timeout" || failure.class === "transient")
+      ) {
         // The call may have reached the server. Whether it took effect is
         // unknown, so it is not replayed, whatever the class would have been.
         cause = failure.class;
@@ -468,8 +483,10 @@ export class McpExecutor {
     ctx: { budgetMs: number; trace: string; attempt: number },
     rule: SupervisionRule,
   ): Promise<{ value: unknown; lane: Lane }> {
+    const wrap = (l: Lane): number =>
+      l.enforcesBudget ? ctx.budgetMs + LANE_GRACE_MS : ctx.budgetMs;
     try {
-      const value = await withTimeout(lane.perform(server, op, ctx), ctx.budgetMs, `on ${server}`);
+      const value = await withTimeout(lane.perform(server, op, ctx), wrap(lane), `on ${server}`);
       return { value, lane };
     } catch (err) {
       if (!(err instanceof DaemonUnavailable)) throw err;
@@ -484,7 +501,7 @@ export class McpExecutor {
       if (fallback === undefined) throw err;
       const value = await withTimeout(
         fallback.perform(server, op, ctx),
-        ctx.budgetMs,
+        wrap(fallback),
         `on ${server}`,
       );
       return { value, lane: fallback };
@@ -530,6 +547,7 @@ export class McpExecutor {
       trace: run.trace,
       elapsedMs: this.now() - run.started,
       ...(run.queuedMs > 0 ? { queuedMs: run.queuedMs } : {}),
+      ...(failure.reason !== undefined ? { reason: failure.reason } : {}),
       ...(failure.retryAfterMs !== undefined ? { retryAfterMs: failure.retryAfterMs } : {}),
       ...(failure.remediation !== undefined ? { remediation: failure.remediation } : {}),
       ...(cause !== undefined ? { cause } : {}),

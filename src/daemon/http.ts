@@ -172,6 +172,7 @@ export function createDaemonHttpServer(options: DaemonHttpOptions): HttpServer {
             if (c.reason !== undefined) payload.reason = c.reason;
             if (c.retryAfterMs !== undefined) payload.retryAfterMs = c.retryAfterMs;
             if (c.remediation !== undefined) payload.remediation = c.remediation;
+            if (c.notDispatched) payload.dispatched = false;
           }
           send(
             statusFor(daemonError.code),

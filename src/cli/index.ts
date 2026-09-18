@@ -183,8 +183,12 @@ export async function main(argv: string[]): Promise<number> {
 function fail(out: Output, err: Error, json: boolean): number {
   const code = err instanceof CliError ? err.exitCode : EXIT_FAILURE;
   if (json) {
+    // Any failure that knows its own envelope prints it; the rest get the plain one.
+    const withEnvelope = err as { envelope?: () => unknown };
     const envelope =
-      err instanceof SupervisedError ? err.envelope() : plainEnvelope(err as CliError);
+      typeof withEnvelope.envelope === "function"
+        ? withEnvelope.envelope()
+        : plainEnvelope(err as CliError);
     out.emit(envelope, () => "");
   }
   out.note(err.message);

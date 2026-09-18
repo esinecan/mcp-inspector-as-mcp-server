@@ -17,6 +17,13 @@ export interface AttemptContext {
 
 export interface Lane {
   readonly name: string;
+  /**
+   * True when the lane applies the budget itself and answers with what it
+   * knows: whether the operation was dispatched at all. The executor then
+   * gives it a short grace beyond the budget before timing the attempt out
+   * from outside, so the lane's answer wins the race.
+   */
+  readonly enforcesBudget?: boolean;
   perform(server: string, op: Operation, ctx: AttemptContext): Promise<unknown>;
   /** Forget any live session for the server, so the next perform reconnects. */
   invalidate(server: string): Promise<void>;
