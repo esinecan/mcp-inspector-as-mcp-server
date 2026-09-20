@@ -193,6 +193,20 @@ describe("redact", () => {
     expect(redact(out)).toBe(out);
   });
 
+  it("replaces an authorization code, a verifier and an id token, and keeps short codes", () => {
+    const out = redact(
+      "callback /callback?code=SplxlOBeZQQYbYS6WxSbIA&state=af0ifjsldkj1234567890 " +
+        'id_token: "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc" code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk ' +
+        'code: 401 {"code":-32603}',
+    );
+    expect(out).not.toContain("SplxlOBeZQQYbYS6WxSbIA");
+    expect(out).not.toContain("af0ifjsldkj1234567890");
+    expect(out).not.toContain("dBjftJeZ4CVP");
+    expect(out).not.toContain("eyJhbGciOiJSUzI1NiJ9");
+    expect(out).toContain("code: 401");
+    expect(out).toContain('"code":-32603');
+  });
+
   it("collapses whitespace and bounds the length", () => {
     expect(redact("a \n\n  b\t c")).toBe("a b c");
     expect(redact("x".repeat(1000)).length).toBeLessThanOrEqual(240);

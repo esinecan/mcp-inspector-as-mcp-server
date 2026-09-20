@@ -19,9 +19,12 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]"],
   // key=value and key: value forms whose key names a secret.
   [
-    /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret|password|passwd|pwd|authorization|auth[_-]?token|token|key)["']?\s*[=:]\s*)["']?[^\s"',;&]{4,}["']?/gi,
+    /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|code[_-]?verifier|client[_-]?secret|secret|password|passwd|pwd|authorization|auth[_-]?token|token|key)["']?\s*[=:]\s*)["']?[^\s"',;&]{4,}["']?/gi,
     "$1[redacted]",
   ],
+  // An authorization code or a state value in a callback URL or a log line.
+  // Only long values, so "code: 401" and a JSON-RPC code stay readable.
+  [/\b((?:code|state)["']?\s*[=:]\s*)["']?[A-Za-z0-9._~+/=-]{16,}["']?/gi, "$1[redacted]"],
   // Long opaque strings: hex digests, base64 blobs, JWTs.
   [/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\b/g, "[jwt]"],
   [/\b(?:sk|pk|rk|ghp|gho|xox[abp])-[A-Za-z0-9_-]{12,}\b/g, "[key]"],
