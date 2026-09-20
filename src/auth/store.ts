@@ -64,6 +64,8 @@ export interface CredentialMeta {
   clientId?: string;
   scope?: string;
   expiresAt?: number;
+  /** Whether an access token is held, as a boolean only. */
+  hasAccessToken: boolean;
   /** Whether a refresh token is held, as a boolean only. */
   refreshable: boolean;
   redirectPort?: number;
@@ -143,7 +145,12 @@ export function credentialStore(
     try {
       const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<CredentialMeta>;
       if (typeof raw.updatedAt !== "number" || typeof raw.serverUrl !== "string") return undefined;
-      return { ...raw, server, refreshable: raw.refreshable === true } as CredentialMeta;
+      return {
+        ...raw,
+        server,
+        hasAccessToken: raw.hasAccessToken === true,
+        refreshable: raw.refreshable === true,
+      } as CredentialMeta;
     } catch {
       return undefined;
     }
@@ -215,6 +222,7 @@ export function credentialStore(
         server,
         serverUrl,
         backend: cipher.name,
+        hasAccessToken: typeof stored.tokens?.access_token === "string",
         refreshable: typeof stored.tokens?.refresh_token === "string",
         updatedAt: now(),
       };

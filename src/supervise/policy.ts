@@ -63,7 +63,12 @@ const ENV_REF = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
  * which is how an auth circuit learns that the credentials it saw fail are
  * gone.
  */
-export function authFingerprint(entry: ServerEntry, env: NodeJS.ProcessEnv = process.env): string {
+export function authFingerprint(
+  entry: ServerEntry,
+  env: NodeJS.ProcessEnv = process.env,
+  /** The credential store's stamp for this server: changes on every login, logout or refresh. */
+  credentialStamp = "",
+): string {
   const names = new Set<string>();
   for (const map of [entry.env, entry.headers]) {
     for (const value of Object.values(map ?? {})) {
@@ -77,5 +82,6 @@ export function authFingerprint(entry: ServerEntry, env: NodeJS.ProcessEnv = pro
     values,
     url: entry.url ?? null,
     headerNames: Object.keys(entry.headers ?? {}).sort(),
+    ...(credentialStamp ? { credentialStamp } : {}),
   });
 }

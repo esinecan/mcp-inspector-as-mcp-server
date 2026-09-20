@@ -164,3 +164,37 @@ describe("resetCircuits", () => {
     expect(file).toEqual(emptyCircuits());
   });
 });
+
+describe("authFingerprint with a credential stamp", () => {
+  it("changes when the stamp changes and stays put when it does not", async () => {
+    const { authFingerprint } = await import("./policy.js");
+    const entry = { url: "https://mcp.example.com/mcp" };
+    const none = authFingerprint(entry, {}, "");
+    const first = authFingerprint(entry, {}, "1000");
+    const second = authFingerprint(entry, {}, "2000");
+    expect(first).not.toBe(none);
+    expect(first).not.toBe(second);
+    expect(authFingerprint(entry, {}, "1000")).toBe(first);
+    // A stamp of "" is the same as no stamp, so a file written before this
+    // field existed still matches.
+    expect(none).toBe(authFingerprint(entry, {}));
+  });
+
+  it("drops an auth circuit once a login moved the stamp", async () => {
+    const { authFingerprint } = await import("./policy.js");
+    const entry = { url: "https://mcp.example.com/mcp" };
+    const file = emptyCircuits();
+    const before = authFingerprint(entry, {}, "");
+    recordFailure(
+      file,
+      { server: "mock" },
+      { class: "auth_required", message: "HTTP 401" },
+      1000,
+      LIMITS,
+      before,
+    );
+    expect(checkServer(file, "mock", 1500, before).allowed).toBe(false);
+    expect(checkServer(file, "mock", 1500, authFingerprint(entry, {}, "1234")).allowed).toBe(true);
+    expect(file.servers.mock).toBeUndefined();
+  });
+});

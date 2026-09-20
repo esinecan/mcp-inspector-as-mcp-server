@@ -11,9 +11,11 @@
 
 import { Client } from "@modelcontextprotocol/client";
 import type { Readable } from "stream";
-import { createTransport, versionNegotiationFor, type TransportConfig } from "../transport.js";
+import { createTransport, versionNegotiationFor } from "../transport.js";
 import { protocolEraOf, type ProtocolEra } from "../session.js";
-import { resolveServerEntry } from "./config.js";
+import { classifyOAuthFailure, isOAuthFailure } from "../auth/classify.js";
+import type { CredentialStore } from "../auth/store.js";
+import { transportConfigFor } from "./transport-config.js";
 import { transportOf, type Fleet } from "./fleet.js";
 import { CliError } from "./errors.js";
 import type { Operation } from "../supervise/operation.js";
@@ -170,6 +172,8 @@ export interface SessionOptions {
   /** Budget in milliseconds for connecting. */
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  /** Where OAuth credentials are read from; absent means no OAuth on this session. */
+  authStore?: CredentialStore;
 }
 
 /** A connection this process opened and must close. */
@@ -190,23 +194,33 @@ export async function openSession(
   options: SessionOptions = {},
 ): Promise<OpenSession> {
   const raw = fleet.entry(serverName);
-  const entry = resolveServerEntry(raw, options.env);
-  const transportConfig: TransportConfig = {
-    command: entry.command,
-    args: entry.args,
-    env: entry.env,
-    cwd: entry.cwd,
-    url: entry.url,
-    headers: entry.headers,
-    transport: entry.transport,
-    negotiation: entry.negotiation ?? "auto",
-  };
+  const { config: transportConfig, auth } = transportConfigFor(serverName, raw, {
+    config: fleet.config,
+    env: options.env,
+    authStore: options.authStore,
+  });
 
   const transport = createTransport(transportConfig);
   const stderrTail: string[] = [];
   attachStderrTail(transport, stderrTail);
   const detail = (): string =>
     stderrTail.length ? `\n  server stderr: ${stderrTail.join(" ").trim()}` : "";
+  /** Wrap a failure so the classifier sees both the message and the cause. */
+  const wrap = (err: unknown): ServerError => {
+    const e = err as Error & { code?: unknown };
+    const cause =
+      auth !== undefined && isOAuthFailure(err)
+        ? classifyOAuthFailure(err, serverName, { refreshed: auth.refreshed })
+        : err;
+    const wrapped = new ServerError(`${e.message}${detail()}`, serverName) as ServerError & {
+      code?: unknown;
+      cause?: unknown;
+    };
+    // The JSON-RPC code is what the classifier trusts most; keep it.
+    if (e.code !== undefined) wrapped.code = e.code;
+    wrapped.cause = cause;
+    return wrapped;
+  };
 
   const client = new Client(
     { name: CLIENT_NAME, version: CLIENT_VERSION },
@@ -221,7 +235,7 @@ export async function openSession(
     );
   } catch (err) {
     await safeClose(transport);
-    throw new ServerError(`${(err as Error).message}${detail()}`, serverName);
+    throw wrap(err);
   }
 
   const capabilities = client.getServerCapabilities() as Record<string, unknown> | undefined;
@@ -247,15 +261,7 @@ export async function openSession(
         );
       } catch (err) {
         if (err instanceof CliError) throw err;
-        const e = err as Error & { code?: unknown };
-        const wrapped = new ServerError(`${e.message}${detail()}`, serverName) as ServerError & {
-          code?: unknown;
-          cause?: unknown;
-        };
-        // The JSON-RPC code is what the classifier trusts most; keep it.
-        if (e.code !== undefined) wrapped.code = e.code;
-        wrapped.cause = err;
-        throw wrapped;
+        throw wrap(err);
       }
     },
     close: () => safeClose(transport),

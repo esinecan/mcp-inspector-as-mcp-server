@@ -23,10 +23,12 @@
 import { statSync } from "fs";
 import type { Client } from "@modelcontextprotocol/client";
 import { sessionRegistry, type SessionRegistry } from "../session.js";
-import type { TransportConfig } from "../transport.js";
 import type { ConnectionInfo } from "../cli/server-session.js";
 import { Fleet, transportOf } from "../cli/fleet.js";
-import { loadConfig, resolveProfile, resolveServerEntry, type CliConfig } from "../cli/config.js";
+import { loadConfig, resolveProfile, type CliConfig } from "../cli/config.js";
+import { transportConfigFor } from "../cli/transport-config.js";
+import { credentialStoreFor } from "../auth/index.js";
+import type { CredentialStore } from "../auth/store.js";
 
 /** One warm server, as the request handler sees it. */
 export interface WarmSession {
@@ -67,13 +69,15 @@ interface Entry {
   session: WarmSession;
   /** The config file's mtime when this entry was opened. */
   mtimeMs: number;
+  /** The credential store's stamp for this server when the entry was opened. */
+  credentialStamp: string;
 }
 
 export class WarmServers implements WarmProvider {
   private readonly entries = new Map<string, Entry>();
   /** Connects in flight, so two concurrent calls never launch two processes. */
   private readonly pending = new Map<string, Promise<WarmSession>>();
-  private cached?: { mtimeMs: number; config: CliConfig };
+  private cached?: { mtimeMs: number; config: CliConfig; authStore: CredentialStore };
   private readonly openedAt = new Map<string, number>();
 
   constructor(
@@ -86,12 +90,18 @@ export class WarmServers implements WarmProvider {
    * The config file as it reads right now, with its mtime. Re-read whenever the
    * file changed, so editing the config takes effect with no daemon restart.
    */
-  private current(): { mtimeMs: number; config: CliConfig } {
+  private current(): { mtimeMs: number; config: CliConfig; authStore: CredentialStore } {
     const mtimeMs = statSync(this.configPath).mtimeMs;
     if (!this.cached || this.cached.mtimeMs !== mtimeMs) {
-      this.cached = { mtimeMs, config: loadConfig(this.configPath) };
+      const config = loadConfig(this.configPath);
+      this.cached = { mtimeMs, config, authStore: credentialStoreFor(config) };
     }
     return this.cached;
+  }
+
+  /** The credential store the current config resolves to. */
+  authStore(): CredentialStore {
+    return this.current().authStore;
   }
 
   fleet(profile: string): Fleet {
@@ -100,10 +110,19 @@ export class WarmServers implements WarmProvider {
   }
 
   async session(serverName: string, timeoutMs?: number): Promise<WarmSession> {
-    const { mtimeMs } = this.current();
+    const { mtimeMs, authStore } = this.current();
+    // A login, a logout or a refresh moves the stamp, and a warm connection
+    // opened under the old credential is dropped the same way an edited
+    // config file drops it.
+    const credentialStamp = authStore.stamp(serverName);
 
     const existing = this.entries.get(serverName);
-    if (existing && existing.mtimeMs === mtimeMs && this.registry.has(existing.session.sessionId)) {
+    if (
+      existing &&
+      existing.mtimeMs === mtimeMs &&
+      existing.credentialStamp === credentialStamp &&
+      this.registry.has(existing.session.sessionId)
+    ) {
       this.registry.touch(existing.session.sessionId);
       return existing.session;
     }
@@ -115,7 +134,7 @@ export class WarmServers implements WarmProvider {
       // A stale entry is dropped before the new connect, so a server whose
       // command changed does not keep answering from the old process.
       if (existing) await this.drop(serverName);
-      return this.open(serverName, mtimeMs, timeoutMs);
+      return this.open(serverName, mtimeMs, credentialStamp, timeoutMs);
     })();
 
     this.pending.set(serverName, promise);
@@ -129,22 +148,16 @@ export class WarmServers implements WarmProvider {
   private async open(
     serverName: string,
     mtimeMs: number,
+    credentialStamp: string,
     timeoutMs?: number,
   ): Promise<WarmSession> {
     const fleet = this.fleet("default");
     const raw = fleet.entry(serverName);
-    const entry = resolveServerEntry(raw, this.env);
-
-    const transportConfig: TransportConfig = {
-      command: entry.command,
-      args: entry.args,
-      env: entry.env,
-      cwd: entry.cwd,
-      url: entry.url,
-      headers: entry.headers,
-      transport: entry.transport,
-      negotiation: entry.negotiation ?? "auto",
-    };
+    const { config: transportConfig } = transportConfigFor(serverName, raw, {
+      config: fleet.config,
+      env: this.env,
+      authStore: this.current().authStore,
+    });
 
     const result = await this.registry.connect(
       transportConfig,
@@ -170,7 +183,7 @@ export class WarmServers implements WarmProvider {
       },
     };
 
-    this.entries.set(serverName, { session, mtimeMs });
+    this.entries.set(serverName, { session, mtimeMs, credentialStamp });
     this.openedAt.set(serverName, Date.now());
     return session;
   }

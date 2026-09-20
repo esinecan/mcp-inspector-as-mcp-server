@@ -10,6 +10,7 @@
 
 import type { Fleet } from "../cli/fleet.js";
 import { openSession, type OpenSession } from "../cli/server-session.js";
+import type { CredentialStore } from "../auth/store.js";
 import type { Lane, AttemptContext } from "./lane.js";
 import type { Operation } from "./operation.js";
 
@@ -20,6 +21,8 @@ export class EphemeralLane implements Lane {
   constructor(
     private readonly fleet: Fleet,
     private readonly env: NodeJS.ProcessEnv = process.env,
+    /** Where OAuth credentials are read from; absent means no OAuth on this lane. */
+    private readonly authStore?: CredentialStore,
   ) {}
 
   async perform(server: string, op: Operation, ctx: AttemptContext): Promise<unknown> {
@@ -30,7 +33,11 @@ export class EphemeralLane implements Lane {
   private session(server: string, timeoutMs?: number): Promise<OpenSession> {
     let pending = this.sessions.get(server);
     if (!pending) {
-      pending = openSession(this.fleet, server, { timeoutMs, env: this.env });
+      pending = openSession(this.fleet, server, {
+        timeoutMs,
+        env: this.env,
+        authStore: this.authStore,
+      });
       this.sessions.set(server, pending);
       // A connect that fails leaves no session behind, so the next attempt
       // connects again rather than re-awaiting the same rejection.

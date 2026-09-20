@@ -329,3 +329,67 @@ describe("the pruning block", () => {
     expect(() => parseConfig({ pruning: { spillDir: "" } }, "t")).toThrow(ConfigError);
   });
 });
+
+describe("auth blocks", () => {
+  const withServers = (extra: Record<string, unknown>) =>
+    parseConfig(
+      { mcpServers: { s: { url: "https://x/mcp" }, t: { command: "node" } }, ...extra },
+      "cfg",
+    );
+
+  it("loads a file without any auth block unchanged", () => {
+    const cfg = withServers({});
+    expect(cfg.auth).toBeUndefined();
+    expect(cfg.mcpServers.s.auth).toBeUndefined();
+  });
+
+  it("accepts the top-level block and a per-server block", () => {
+    const cfg = parseConfig(
+      {
+        mcpServers: {
+          s: {
+            url: "https://x/mcp",
+            auth: {
+              type: "oauth",
+              scope: " files:read ",
+              clientId: "c",
+              clientSecretEnv: "MY_SECRET",
+            },
+          },
+        },
+        auth: { store: "file", callbackPort: 9000, clientName: " me " },
+      },
+      "cfg",
+    );
+    expect(cfg.auth).toEqual({ store: "file", callbackPort: 9000, clientName: "me" });
+    expect(cfg.mcpServers.s.auth).toEqual({
+      type: "oauth",
+      scope: "files:read",
+      clientId: "c",
+      clientSecretEnv: "MY_SECRET",
+    });
+  });
+
+  it.each([
+    [{ mcpServers: { t: { command: "node", auth: { type: "oauth" } } } }, /stdio server/],
+    [{ mcpServers: { s: { url: "https://x/mcp", auth: { type: "basic" } } } }, /must be "oauth"/],
+    [
+      { mcpServers: { s: { url: "https://x/mcp", auth: { type: "oauth", clientSecret: "x" } } } },
+      /literal secret/,
+    ],
+    [
+      {
+        mcpServers: {
+          s: { url: "https://x/mcp", auth: { type: "oauth", clientSecretEnv: "not a name" } },
+        },
+      },
+      /NAME of an environment variable/,
+    ],
+    [{ mcpServers: { s: { url: "https://x/mcp", auth: { type: "oauth", scope: "" } } } }, /scope/],
+    [{ mcpServers: {}, auth: { store: "keychain" } }, /"dpapi" or "file"/],
+    [{ mcpServers: {}, auth: { callbackPort: 70000 } }, /TCP port/],
+    [{ mcpServers: {}, auth: "yes" }, /"auth" must be an object/],
+  ])("rejects %j", (raw, message) => {
+    expect(() => parseConfig(raw, "cfg")).toThrow(message);
+  });
+});

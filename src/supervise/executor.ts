@@ -87,6 +87,8 @@ export interface ExecutorDeps {
   store?: StateStore;
   events?: EventSink;
   env?: NodeJS.ProcessEnv;
+  /** The credential store's stamp for a server, so a login closes its auth circuit. */
+  credentialStamp?: (server: string) => string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -623,7 +625,8 @@ export class McpExecutor {
 
   private fingerprint(server: string): string {
     try {
-      return authFingerprint(this.deps.fleet.entry(server), this.env);
+      const stamp = this.deps.credentialStamp?.(server) ?? "";
+      return authFingerprint(this.deps.fleet.entry(server), this.env, stamp);
     } catch {
       return "";
     }

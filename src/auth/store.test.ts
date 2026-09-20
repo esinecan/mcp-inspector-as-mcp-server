@@ -80,6 +80,7 @@ describe("file backend", () => {
       clientId: "abc",
       scope: "files:read",
       expiresAt: 4000,
+      hasAccessToken: true,
       refreshable: true,
       redirectPort: 8792,
     });

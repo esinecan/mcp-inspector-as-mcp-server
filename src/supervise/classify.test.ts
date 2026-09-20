@@ -221,3 +221,41 @@ describe("redact", () => {
     );
   });
 });
+
+describe("classifyThrown on the SDK's OAuth errors", () => {
+  it("sorts an insufficient-scope challenge into auth_required with the scope in the remediation", async () => {
+    const { InsufficientScopeError } = await import("@modelcontextprotocol/client");
+    const err = new InsufficientScopeError({ requiredScope: "files:write" });
+    const out = classifyThrown(new Error("wrapped", { cause: err }));
+    expect(out.class).toBe("auth_required");
+    expect(out.code).toBe("oauth_insufficient_scope");
+    expect(out.remediation).toContain('--scope "files:write"');
+  });
+
+  it("sorts an UnauthorizedError into auth_required / oauth_token_rejected", async () => {
+    const { UnauthorizedError } = await import("@modelcontextprotocol/client");
+    const out = classifyThrown(new UnauthorizedError());
+    expect(out.class).toBe("auth_required");
+    expect(out.code).toBe("oauth_token_rejected");
+    expect(isRetryable(out.class)).toBe(false);
+  });
+
+  it("sorts an authorization-server error into structural with its code", async () => {
+    const { OAuthError, OAuthErrorCode } = await import("@modelcontextprotocol/client");
+    const out = classifyThrown(
+      new OAuthError(OAuthErrorCode.InvalidClientMetadata, "bad redirect"),
+    );
+    expect(out.class).toBe("structural");
+    expect(out.code).toBe("oauth_invalid_client_metadata");
+  });
+
+  it("finds a ClassifiedError behind a wrapper's cause", () => {
+    const inner = new ClassifiedError({
+      class: "auth_required",
+      code: "oauth_login_required",
+      message: "m",
+    });
+    const outer = Object.assign(new Error("outer text with HTTP 503"), { cause: inner });
+    expect(classifyThrown(outer).code).toBe("oauth_login_required");
+  });
+});

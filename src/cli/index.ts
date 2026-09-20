@@ -59,6 +59,7 @@ import {
 } from "../supervise/index.js";
 import { cmdCircuits } from "./circuits.js";
 import { cmdSearch } from "./search.js";
+import { credentialStoreFor } from "../auth/index.js";
 
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
@@ -224,7 +225,8 @@ export interface Context {
 export function context(args: ParsedArgs): Context {
   const fleet = loadFleet({ config: args.config, profile: args.profile });
   const settings = supervisionSettings(fleet.config);
-  const ephemeral = new EphemeralLane(fleet);
+  const authStore = credentialStoreFor(fleet.config);
+  const ephemeral = new EphemeralLane(fleet, process.env, authStore);
   let primary: Lane = ephemeral;
   let fallback: Lane | undefined;
 
@@ -246,6 +248,7 @@ export function context(args: ParsedArgs): Context {
     fallback,
     store: fileStateStore(join(settings.stateDir, "circuits.json")),
     events: settings.eventLog !== undefined ? fileSink(settings.eventLog) : NO_EVENTS,
+    credentialStamp: (server) => authStore.stamp(server),
   });
   openExecutors.push(executor);
 

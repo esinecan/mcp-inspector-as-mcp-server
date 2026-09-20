@@ -26,6 +26,31 @@ export interface ServerEntry {
   transport?: TransportType;
   /** Optional override; the CLI negotiates "auto" without it. */
   negotiation?: NegotiationMode;
+  /** OAuth for a URL server. Absent means: OAuth once `auth login` has run, plain HTTP before. */
+  auth?: ServerAuthEntry;
+}
+
+/**
+ * The `auth` block of one server. `scope` is an opt-in that widens the grant;
+ * without it the client follows the specification's selection (the 401
+ * challenge, then the resource metadata, otherwise no scope at all).
+ * `clientSecretEnv` is the NAME of an environment variable, never a secret.
+ */
+export interface ServerAuthEntry {
+  type: "oauth";
+  scope?: string;
+  clientId?: string;
+  clientSecretEnv?: string;
+}
+
+/** The top-level `auth` block: where credentials are kept and how the login answers. */
+export interface AuthEntry {
+  /** `dpapi` on Windows by default, `file` elsewhere. */
+  store?: "dpapi" | "file";
+  /** The loopback port the authorization redirect lands on. Default 8792. */
+  callbackPort?: number;
+  /** The name the consent page shows. Default "mcp-cli". */
+  clientName?: string;
 }
 
 /** One entry of `profiles`. `block` holds globs over the `server.tool` address. */
@@ -166,6 +191,7 @@ export interface CliConfig {
   supervision?: SupervisionEntry;
   routes?: RoutesEntry;
   daemon?: DaemonEntry;
+  auth?: AuthEntry;
 }
 
 export const DEFAULT_BRIDGE: BridgeSettings = {
@@ -295,8 +321,12 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
         `${source}: server name "${name}" contains a dot, which the server.tool address uses as its separator`,
       );
     }
+    if (entry.auth !== undefined) {
+      entry.auth = parseServerAuthEntry(entry.auth, name, entry, source);
+    }
   }
 
+  const auth = parseAuthEntry(obj.auth, source);
   const bridge = parseBridgeEntry(obj.bridge, source);
   const pruning = parsePruningEntry(obj.pruning, source);
   const supervision = parseSupervisionEntry(obj.supervision, source, Object.keys(mcpServers));
@@ -312,11 +342,92 @@ export function parseConfig(raw: unknown, source: string): CliConfig {
   if (supervision) config.supervision = supervision;
   if (routes) config.routes = routes;
   if (daemon) config.daemon = daemon;
+  if (auth) config.auth = auth;
   return config;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Validate one server's `auth` block. Only a URL server may carry one. */
+function parseServerAuthEntry(
+  raw: unknown,
+  name: string,
+  entry: ServerEntry,
+  source: string,
+): ServerAuthEntry {
+  const where = `mcpServers.${name}.auth`;
+  if (!isPlainObject(raw)) throw new ConfigError(`${source}: "${where}" must be an object`);
+  if (!entry.url) {
+    throw new ConfigError(
+      `${source}: "${where}" is set on a stdio server; OAuth applies to "url" servers only`,
+    );
+  }
+  if (raw.type !== "oauth") {
+    throw new ConfigError(`${source}: "${where}.type" must be "oauth"`);
+  }
+  const out: ServerAuthEntry = { type: "oauth" };
+  if (raw.scope !== undefined) {
+    if (typeof raw.scope !== "string" || raw.scope.trim().length === 0) {
+      throw new ConfigError(`${source}: "${where}.scope" must be a non-empty string`);
+    }
+    out.scope = raw.scope.trim();
+  }
+  if (raw.clientId !== undefined) {
+    if (typeof raw.clientId !== "string" || raw.clientId.length === 0) {
+      throw new ConfigError(`${source}: "${where}.clientId" must be a non-empty string`);
+    }
+    out.clientId = raw.clientId;
+  }
+  if (raw.clientSecretEnv !== undefined) {
+    if (typeof raw.clientSecretEnv !== "string" || !ENV_NAME.test(raw.clientSecretEnv)) {
+      throw new ConfigError(
+        `${source}: "${where}.clientSecretEnv" must be the NAME of an environment variable, never a secret`,
+      );
+    }
+    out.clientSecretEnv = raw.clientSecretEnv;
+  }
+  for (const key of ["clientSecret", "client_secret", "token", "accessToken", "refreshToken"]) {
+    if (raw[key] !== undefined) {
+      throw new ConfigError(
+        `${source}: "${where}.${key}" is a literal secret; credentials live in the credential store, never in this file`,
+      );
+    }
+  }
+  return out;
+}
+
+/** Validate the top-level `auth` block. */
+function parseAuthEntry(raw: unknown, source: string): AuthEntry | undefined {
+  if (raw === undefined) return undefined;
+  if (!isPlainObject(raw)) throw new ConfigError(`${source}: "auth" must be an object`);
+  const out: AuthEntry = {};
+  if (raw.store !== undefined) {
+    if (raw.store !== "dpapi" && raw.store !== "file") {
+      throw new ConfigError(`${source}: "auth.store" must be "dpapi" or "file"`);
+    }
+    out.store = raw.store;
+  }
+  if (raw.callbackPort !== undefined) {
+    if (
+      !Number.isInteger(raw.callbackPort) ||
+      (raw.callbackPort as number) <= 0 ||
+      (raw.callbackPort as number) > 65535
+    ) {
+      throw new ConfigError(`${source}: "auth.callbackPort" must be a TCP port number`);
+    }
+    out.callbackPort = raw.callbackPort as number;
+  }
+  if (raw.clientName !== undefined) {
+    if (typeof raw.clientName !== "string" || raw.clientName.trim().length === 0) {
+      throw new ConfigError(`${source}: "auth.clientName" must be a non-empty string`);
+    }
+    out.clientName = raw.clientName.trim();
+  }
+  return out;
 }
 
 function positiveNumber(value: unknown, what: string, source: string): number {

@@ -7,6 +7,8 @@
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { SSEClientTransport, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type {
+  AuthProvider,
+  OAuthClientProvider,
   Transport,
   TransportSendOptions,
   JSONRPCMessage,
@@ -38,6 +40,14 @@ export interface TransportConfig {
    * era; a bare revision string pins one exactly (e.g. "2026-07-28").
    */
   negotiation?: NegotiationMode;
+  /**
+   * The bearer-token source for an HTTP or SSE transport. The SDK calls it
+   * before every request and on a 401. Absent means no Authorization header
+   * beyond whatever `headers` carries.
+   */
+  authProvider?: AuthProvider | OAuthClientProvider;
+  /** What a 403 `insufficient_scope` does: the SDK's step-up, or a throw the caller classifies. */
+  onInsufficientScope?: "reauthorize" | "throw";
 }
 
 /** "legacy" | "auto" | a pinned protocol revision such as "2026-07-28". */
@@ -110,14 +120,22 @@ export function createTransport(config: TransportConfig): Transport {
 
   const url = new URL(config.url);
 
+  const options: {
+    requestInit?: RequestInit;
+    authProvider?: AuthProvider | OAuthClientProvider;
+    onInsufficientScope?: "reauthorize" | "throw";
+  } = {};
+  if (config.headers) options.requestInit = { headers: config.headers };
+  if (config.authProvider) options.authProvider = config.authProvider;
+  if (config.onInsufficientScope) options.onInsufficientScope = config.onInsufficientScope;
+  const hasOptions = Object.keys(options).length > 0;
+
   if (transportType === "sse") {
-    const options = config.headers ? { requestInit: { headers: config.headers } } : undefined;
-    return new SSEClientTransport(url, options);
+    return new SSEClientTransport(url, hasOptions ? options : undefined);
   }
 
   if (transportType === "http") {
-    const options = config.headers ? { requestInit: { headers: config.headers } } : undefined;
-    return new StreamableHTTPClientTransport(url, options);
+    return new StreamableHTTPClientTransport(url, hasOptions ? options : undefined);
   }
 
   throw new Error(`Unknown transport type: ${transportType}`);

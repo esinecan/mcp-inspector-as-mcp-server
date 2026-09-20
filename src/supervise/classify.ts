@@ -18,6 +18,11 @@
  * calling it structural would exclude it for a minute on one sighting.
  */
 
+import {
+  InsufficientScopeError,
+  OAuthError,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import { redact } from "./redact.js";
 
 export type FailureClass =
@@ -188,8 +193,12 @@ export function classFromMessage(text: string): FailureClass {
 
 /** Classify a thrown value. Never throws itself. */
 export function classifyThrown(err: unknown): Classified {
-  if (err instanceof ClassifiedError) {
-    const out = err.toClassified();
+  // A failure that already knows its class may sit behind a wrapper that
+  // added context: the session's ServerError, the SDK's own error. The
+  // nearest classified cause wins.
+  const known = findClassified(err) ?? fromSdkOAuth(err);
+  if (known) {
+    const out = known.toClassified();
     out.message = redact(out.message);
     if (out.remediation === undefined && REMEDIATION[out.class]) {
       out.remediation = REMEDIATION[out.class];
@@ -228,6 +237,55 @@ export function classifyThrown(err: unknown): Classified {
   if (code !== undefined) out.code = code;
   if (REMEDIATION[klass]) out.remediation = REMEDIATION[klass];
   return out;
+}
+
+/**
+ * The SDK's own OAuth errors, when a lane let one through unwrapped: the
+ * daemon's warm client throws them raw. The remediation keeps the literal
+ * `<server>` because this function does not know the name; the session path
+ * fills it in before it gets here.
+ */
+function fromSdkOAuth(err: unknown): ClassifiedError | undefined {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current !== null && typeof current === "object"; depth++) {
+    if (current instanceof InsufficientScopeError) {
+      const scope = current.requiredScope;
+      return new ClassifiedError({
+        class: "auth_required",
+        code: "oauth_insufficient_scope",
+        message: `the server needs scope "${scope ?? "(unnamed)"}"`,
+        remediation: `Run: mcp-cli auth login <server>${scope ? ` --scope "${scope}"` : ""}`,
+      });
+    }
+    if (current instanceof UnauthorizedError) {
+      return new ClassifiedError({
+        class: "auth_required",
+        code: "oauth_token_rejected",
+        message: "the server rejected the token it was given",
+        remediation: "Run: mcp-cli auth logout <server> && mcp-cli auth login <server>",
+      });
+    }
+    if (current instanceof OAuthError) {
+      return new ClassifiedError({
+        class: "structural",
+        code: `oauth_${current.code}`,
+        message: `the authorization server answered ${current.code}: ${current.message}`,
+        remediation: "The authorization server refused the flow; see: mcp-cli auth status <server>",
+      });
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/** The first ClassifiedError on the cause chain, at most eight links deep. */
+function findClassified(err: unknown): ClassifiedError | undefined {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current !== null && typeof current === "object"; depth++) {
+    if (current instanceof ClassifiedError) return current;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 /**
