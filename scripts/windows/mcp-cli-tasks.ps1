@@ -1,37 +1,48 @@
 <#
 .SYNOPSIS
     Install, inspect, repair and roll back the mcp-cli daemon and bridge as
-    Windows scheduled tasks, with a watchdog that brings either back.
+    Windows scheduled tasks, each supervised from inside its own task, with a
+    watchdog that brings either back.
 
 .DESCRIPTION
     Three tasks, all running as the interactive user at logon:
 
-      mcp-cli-daemon    wscript shim -> node dist/cli/index.js daemon serve
-      mcp-cli-bridge    wscript shim -> node dist/cli/index.js bridge serve
+      mcp-cli-daemon    wscript shim -> this script -Action run -Service daemon -> node daemon serve
+      mcp-cli-bridge    wscript shim -> this script -Action run -Service bridge -> node bridge serve
       mcp-cli-watchdog  every two minutes: this script with -Action watchdog
+
+    The recovery contract, as measured on this box:
+
+      A process that exits is started again by the supervisor loop inside its
+      task, within a few seconds (2 s backoff, doubling to 30 s while it keeps
+      failing, a 60 s pause after ten exits in five minutes, and never giving
+      up). A process that is alive but not answering its readiness probe, or a
+      task that is not running at all, is caught by the watchdog on its next
+      tick, at most two minutes later, and back within about a minute after
+      that. The scheduler's own restart-on-failure is configured on both
+      service tasks and is not relied on; what it does on this build is
+      recorded by -Action probe-restart and quoted by -Action status as
+      observed, never assumed.
 
     Why a wscript shim and not node.exe as the task action. Task Scheduler
     allocates a console for a console-subsystem action, and a console for an
     interactive-user task is a window that flashes on every start. wscript.exe
-    is a GUI-subsystem process, so no console is allocated, and its Run call
-    with bWaitOnReturn=True does not return until node exits and then returns
-    node's exit code. The task is therefore running exactly as long as the
-    node process is, and fails exactly when node fails, which is what the
-    scheduler's restart-on-failure needs: three restarts a minute apart. A
-    detached child, the previous arrangement, gave the scheduler nothing to
-    supervise. (conhost --headless was tried for the same purpose and hung.)
+    is a GUI-subsystem process, so no console is allocated; the 0 hides the
+    child's window and the True makes Run wait for the child and return its
+    exit code, so the task is running exactly as long as the supervisor is.
 
-    The watchdog is the recovery that has been seen to work. Measured on this
-    Windows 11 build (2026-09-18): the scheduler's restart-on-failure did not
-    rerun a task whose action exited non-zero, neither a trigger-started task
-    whose node was killed (exit -1) nor a probe task of `cmd /c exit 1`; the
-    setting evidently covers a failure to launch the action, not the action
-    failing. It is configured as specified and costs nothing, and the
-    watchdog covers every other case: a process that died, one that is alive
-    and not answering, and one whose task never started. Every two minutes it
-    probes /health/ready (daemon) and /health/live (bridge), ends the task,
-    kills any node still holding the port, and starts the task again. A
-    `paused` marker in the state directory makes it look and not act.
+    Why a supervisor loop and not the scheduler's restart setting. On this
+    Windows 11 build (first seen 2026-09-18) restart-on-failure was not seen
+    to rerun a task whose action had started and then exited non-zero. The
+    loop does not depend on how the scheduler defines "failure": it waits for
+    node, reads the exit code, logs it, and starts node again.
+
+    The watchdog probes /health/ready on both services. When the supervisor
+    loop is alive and only node is unhealthy, it kills node and lets the loop
+    start it. When the loop is gone, it ends the task, kills the loop's pid
+    and any node still holding the port, and starts the task again. A
+    `paused` marker in the state directory makes the loop exit after the next
+    node exit and makes the watchdog look and not act.
 
     Every install first exports the current task definitions and copies the
     current shims into a timestamped backup under the state directory, and
@@ -41,7 +52,11 @@
     shims. Add -Restart to end the running services and start the new code.
 
 .PARAMETER Action
-    install | status | repair | watchdog | rollback | uninstall | pause | resume
+    install | status | repair | watchdog | run | probe-restart | rollback |
+    uninstall | pause | resume
+
+.PARAMETER Service
+    With -Action run: daemon or bridge.
 
 .PARAMETER Root
     The checkout whose dist/cli/index.js the tasks run. Defaults to the
@@ -52,6 +67,9 @@
     isolated run on other ports uses another prefix and never touches the
     live tasks.
 
+.PARAMETER ProbeMinutes
+    With -Action probe-restart: how long each probe task is observed.
+
 .PARAMETER GenerateBridgeToken
     With install: if the config's bridge.authTokenEnv names a variable that is
     not set for this user, set it to a fresh random value. The value is never
@@ -60,12 +78,15 @@
 .EXAMPLE
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\mcp-cli-tasks.ps1 -Action install -Restart
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\mcp-cli-tasks.ps1 -Action status
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\mcp-cli-tasks.ps1 -Action probe-restart
     powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\mcp-cli-tasks.ps1 -Action rollback
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('install', 'status', 'repair', 'watchdog', 'rollback', 'uninstall', 'pause', 'resume')]
+    [ValidateSet('install', 'status', 'repair', 'watchdog', 'run', 'probe-restart', 'rollback', 'uninstall', 'pause', 'resume')]
     [string]$Action = 'status',
+    [ValidateSet('', 'daemon', 'bridge')]
+    [string]$Service = '',
     [string]$Root = '',
     [string]$Node = '',
     [string]$Config = (Join-Path $env:USERPROFILE '.agents\mcp-cli.json'),
@@ -76,6 +97,7 @@ param(
     [string]$LogDir = (Join-Path $env:USERPROFILE '.agents'),
     [string]$Backup = '',
     [string]$TaskPrefix = 'mcp-cli',
+    [int]$ProbeMinutes = 4,
     [switch]$Restart,
     [switch]$GenerateBridgeToken,
     [switch]$NoBridge
@@ -98,6 +120,7 @@ $TaskWatchdog = "$TaskPrefix-watchdog"
 $AllTasks = @($TaskDaemon, $TaskBridge, $TaskWatchdog)
 $PausedMarker = Join-Path $StateDir 'paused'
 $WatchdogLog = Join-Path $StateDir 'watchdog.log'
+$ProbeResult = Join-Path $StateDir 'restart-probe.json'
 $Entry = Join-Path $Root 'dist\cli\index.js'
 $DaemonLog = Join-Path $LogDir 'mcp-cli-daemon.log'
 $BridgeLog = Join-Path $LogDir 'mcp-cli-bridge.log'
@@ -106,15 +129,26 @@ $ShimBridge = Join-Path $ShimDir "$TaskPrefix-bridge-hidden.vbs"
 $ShimWatchdog = Join-Path $ShimDir "$TaskPrefix-watchdog-hidden.vbs"
 $ShimBridgePs1 = Join-Path $ShimDir "$TaskPrefix-bridge.ps1"
 
+function Get-SupervisorPidFile { param([string]$Kind) return (Join-Path $StateDir "$Kind-supervisor.pid") }
+function Get-SupervisorLog { param([string]$Kind) return (Join-Path $StateDir "$Kind-supervisor.log") }
+
+function Add-LogLine {
+    param([string]$Path, [string]$Line)
+    if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
+    if ((Test-Path $Path) -and ((Get-Item $Path).Length -gt 1MB)) {
+        Move-Item -Force $Path ($Path + '.1')
+    }
+    $stamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
+    Add-Content -Path $Path -Value "$stamp $Line" -Encoding utf8
+}
+
 function Write-Log {
     param([string]$Line)
     $stamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
     if ($Action -eq 'watchdog') {
-        if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
-        if ((Test-Path $WatchdogLog) -and ((Get-Item $WatchdogLog).Length -gt 1MB)) {
-            Move-Item -Force $WatchdogLog ($WatchdogLog + '.1')
-        }
-        Add-Content -Path $WatchdogLog -Value "$stamp $Line" -Encoding utf8
+        Add-LogLine $WatchdogLog $Line
+    } elseif ($Action -eq 'run') {
+        Add-LogLine (Get-SupervisorLog $Service) $Line
     } else {
         # Write-Host, not Write-Output: a function that returns a value must
         # not have its log lines captured into that value by the caller.
@@ -162,6 +196,22 @@ function Get-ServiceProcesses {
     }
 }
 
+function Get-SupervisorProcess {
+    # The supervisor loop of THIS service and THIS prefix, when its pid file
+    # names a living powershell that is running this script's run action.
+    param([string]$Kind)
+    $file = Get-SupervisorPidFile $Kind
+    if (-not (Test-Path $file)) { return $null }
+    $raw = (Get-Content -Path $file -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $procId = 0
+    if (-not [int]::TryParse($raw.Trim(), [ref]$procId)) { return $null }
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$procId" -ErrorAction SilentlyContinue
+    if ($null -eq $proc) { return $null }
+    if ($proc.CommandLine -notmatch '-Action\s+run' -or $proc.CommandLine -notmatch ('-Service\s+' + $Kind) -or $proc.CommandLine -notmatch ('-TaskPrefix\s+"?' + [regex]::Escape($TaskPrefix) + '"?(\s|$)')) { return $null }
+    return $proc
+}
+
 function Get-TaskOrNull {
     param([string]$Name)
     return Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
@@ -189,15 +239,23 @@ function Test-Loopback {
     return ($b -eq 'localhost' -or $b -eq '::1' -or $b -eq '[::1]' -or $b.StartsWith('127.'))
 }
 
+function Get-CommonArgs {
+    # The arguments every re-invocation of this script carries, so a shim and
+    # a supervisor address the same tasks, ports and directories.
+    return ('-Root ""{0}"" -Config ""{1}"" -DaemonPort {2} -BridgePort {3} -ShimDir ""{4}"" -StateDir ""{5}"" -LogDir ""{6}"" -TaskPrefix ""{7}""{8}' -f $Root, $Config, $DaemonPort, $BridgePort, $ShimDir, $StateDir, $LogDir, $TaskPrefix, $(if ($NoBridge) { ' -NoBridge' } else { '' }))
+}
+
 # ---------------------------------------------------------------- shims --
 
 function Write-Shims {
     param([string]$NodeExe)
     if (-not (Test-Path $ShimDir)) { New-Item -ItemType Directory -Force $ShimDir | Out-Null }
 
-    $daemonCmd = ('""{0}"" ""{1}"" daemon serve --port {2} --config ""{3}"" --log ""{4}""' -f $NodeExe, $Entry, $DaemonPort, $Config, $DaemonLog)
-    $bridgeCmd = ('""{0}"" ""{1}"" bridge serve --port {2} --config ""{3}"" --log ""{4}""' -f $NodeExe, $Entry, $BridgePort, $Config, $BridgeLog)
-    $watchdogCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action watchdog -Root ""{1}"" -Config ""{2}"" -DaemonPort {3} -BridgePort {4} -ShimDir ""{5}"" -StateDir ""{6}"" -LogDir ""{7}"" -TaskPrefix ""{8}""{9}' -f $ScriptPath, $Root, $Config, $DaemonPort, $BridgePort, $ShimDir, $StateDir, $LogDir, $TaskPrefix, $(if ($NoBridge) { ' -NoBridge' } else { '' }))
+    $common = Get-CommonArgs
+    $nodeArg = if ($Node -ne '') { ' -Node ""{0}""' -f $Node } else { '' }
+    $daemonCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action run -Service daemon {1}{2}' -f $ScriptPath, $common, $nodeArg)
+    $bridgeCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action run -Service bridge {1}{2}' -f $ScriptPath, $common, $nodeArg)
+    $watchdogCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action watchdog {1}' -f $ScriptPath, $common)
 
     $shim = @'
 ' Generated by scripts/windows/mcp-cli-tasks.ps1. Do not edit; rerun install.
@@ -213,9 +271,10 @@ WScript.Quit shell.Run("{0}", 0, True)
     Set-Content -Path $ShimWatchdog -Value ($shim -f $watchdogCmd) -Encoding ascii
 
     $ps1 = @"
-# Superseded by the mcp-cli-bridge scheduled task, which runs the same command
-# through mcp-cli-bridge-hidden.vbs. Kept so a person can run the bridge in the
-# foreground and read its output. Generated by scripts/windows/mcp-cli-tasks.ps1.
+# Superseded by the $TaskBridge scheduled task, which runs the same command
+# under a supervisor loop through $TaskPrefix-bridge-hidden.vbs. Kept so a
+# person can run the bridge in the foreground and read its output.
+# Generated by scripts/windows/mcp-cli-tasks.ps1.
 & '$NodeExe' '$Entry' bridge serve --port $BridgePort --config '$Config'
 exit `$LASTEXITCODE
 "@
@@ -260,7 +319,7 @@ function Register-ServiceTask {
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask -TaskName $Name -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-    Write-Log "registered $Name (logon trigger, 3 restarts a minute apart, start when available)"
+    Write-Log "registered $Name (logon trigger, supervisor loop inside the task, scheduler restart 3/PT1M configured and not relied on)"
 }
 
 function Register-WatchdogTask {
@@ -280,23 +339,29 @@ function Register-WatchdogTask {
 # ------------------------------------------------------------ lifecycle --
 
 function Stop-Service {
+    # The supervisor first, so it cannot start node again while node is
+    # being killed; then node; then the task, which is the shim's wscript.
     param([string]$Kind, [string]$TaskName)
-    $task = Get-TaskOrNull $TaskName
-    if ($null -ne $task -and $task.State -eq 'Running') {
-        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        Write-Log "ended task $TaskName"
+    $sup = Get-SupervisorProcess $Kind
+    if ($null -ne $sup) {
+        Stop-Process -Id $sup.ProcessId -Force -ErrorAction SilentlyContinue
+        Write-Log "killed $Kind supervisor pid $($sup.ProcessId)"
     }
+    Remove-Item (Get-SupervisorPidFile $Kind) -Force -ErrorAction SilentlyContinue
     $procs = @(Get-ServiceProcesses $Kind)
     foreach ($p in $procs) {
         Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
         Write-Log "killed $Kind node pid $($p.ProcessId) (started $($p.CreationDate))"
     }
+    $task = Get-TaskOrNull $TaskName
+    if ($null -ne $task -and $task.State -eq 'Running') {
+        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        Write-Log "ended task $TaskName"
+    }
 }
 
-function Start-Service {
-    param([string]$Kind, [string]$TaskName, [int]$Port, [string]$ReadyPath, [int]$WaitSeconds = 60)
-    Start-ScheduledTask -TaskName $TaskName
-    Write-Log "started task $TaskName; waiting up to ${WaitSeconds}s for http://127.0.0.1:$Port$ReadyPath"
+function Wait-Health {
+    param([string]$Kind, [int]$Port, [string]$ReadyPath, [int]$WaitSeconds)
     $deadline = (Get-Date).AddSeconds($WaitSeconds)
     while ((Get-Date) -lt $deadline) {
         if (Test-Health $Port $ReadyPath) {
@@ -309,12 +374,23 @@ function Start-Service {
     return $false
 }
 
+function Start-Service {
+    param([string]$Kind, [string]$TaskName, [int]$Port, [string]$ReadyPath, [int]$WaitSeconds = 60)
+    if ($null -ne (Get-SupervisorProcess $Kind)) {
+        Write-Log "$Kind supervisor is alive; not starting the task twice"
+    } else {
+        Start-ScheduledTask -TaskName $TaskName
+        Write-Log "started task $TaskName; waiting up to ${WaitSeconds}s for http://127.0.0.1:$Port$ReadyPath"
+    }
+    return (Wait-Health $Kind $Port $ReadyPath $WaitSeconds)
+}
+
 function Invoke-Watch {
     param([switch]$Verbose_)
     $paused = Test-Path $PausedMarker
     $results = @{}
     $services = @(@{ Kind = 'daemon'; Task = $TaskDaemon; Port = $DaemonPort; Path = '/health/ready' })
-    if (-not $NoBridge) { $services += @{ Kind = 'bridge'; Task = $TaskBridge; Port = $BridgePort; Path = '/health/live' } }
+    if (-not $NoBridge) { $services += @{ Kind = 'bridge'; Task = $TaskBridge; Port = $BridgePort; Path = '/health/ready' } }
     foreach ($s in $services) {
         $healthy = Test-Health $s.Port $s.Path
         if ($healthy) {
@@ -332,7 +408,20 @@ function Invoke-Watch {
             Write-Log "$($s.Kind) unhealthy and task $($s.Task) is not registered; run -Action install"
             continue
         }
-        Write-Log "$($s.Kind) unhealthy on port $($s.Port); restarting"
+        $sup = Get-SupervisorProcess $s.Kind
+        if ($null -ne $sup) {
+            # The loop is alive: node is hung or not ready. Kill node alone and
+            # let the loop start it; no second loop is started.
+            Write-Log "$($s.Kind) unhealthy on port $($s.Port); supervisor pid $($sup.ProcessId) alive, killing node for it to restart"
+            foreach ($p in @(Get-ServiceProcesses $s.Kind)) {
+                Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+                Write-Log "killed $($s.Kind) node pid $($p.ProcessId) (started $($p.CreationDate))"
+            }
+            $ok = Wait-Health $s.Kind $s.Port $s.Path 60
+            $results[$s.Kind] = if ($ok) { 'restarted by supervisor' } else { 'restart failed' }
+            continue
+        }
+        Write-Log "$($s.Kind) unhealthy on port $($s.Port) and no supervisor; restarting the task"
         Stop-Service $s.Kind $s.Task
         $ok = Start-Service $s.Kind $s.Task $s.Port $s.Path 60
         $results[$s.Kind] = if ($ok) { 'restarted' } else { 'restart failed' }
@@ -340,7 +429,188 @@ function Invoke-Watch {
     return $results
 }
 
+# ------------------------------------------------------------ supervisor --
+
+function Invoke-Supervisor {
+    # Runs inside the service task: start node, wait, log the exit, start it
+    # again. Exits only when paused or when another supervisor took the pid
+    # file, so the task is running exactly as long as the service is meant
+    # to be.
+    param([string]$Kind)
+    $nodeExe = Resolve-Node
+    $port = if ($Kind -eq 'daemon') { $DaemonPort } else { $BridgePort }
+    $logFile = if ($Kind -eq 'daemon') { $DaemonLog } else { $BridgeLog }
+    $verb = if ($Kind -eq 'daemon') { 'daemon' } else { 'bridge' }
+    $pidFile = Get-SupervisorPidFile $Kind
+    if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
+    Set-Content -Path $pidFile -Value $PID -Encoding ascii
+    Write-Log "supervisor pid $PID for $Kind on port $port; entry $Entry"
+    $count = 0
+    $backoff = 2
+    $recent = New-Object System.Collections.ArrayList
+    while ($true) {
+        if (Test-Path $PausedMarker) { Write-Log 'paused marker present; supervisor exiting'; break }
+        $owner = (Get-Content -Path $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ("$owner".Trim() -ne "$PID") { Write-Log "pid file names $owner, not $PID; supervisor exiting"; break }
+        $started = Get-Date
+        $argList = @('"' + $Entry + '"', $verb, 'serve', '--port', $port, '--config', ('"' + $Config + '"'), '--log', ('"' + $logFile + '"'))
+        try {
+            $proc = Start-Process -FilePath $nodeExe -ArgumentList $argList -NoNewWindow -PassThru
+        } catch {
+            Write-Log "could not start node: $($_.Exception.Message)"
+            Start-Sleep -Seconds 30
+            continue
+        }
+        $proc.WaitForExit()
+        $code = $proc.ExitCode
+        $elapsed = [int]((Get-Date) - $started).TotalMilliseconds
+        $count += 1
+        Write-Log ("restart n={0} code={1} after={2}ms pid={3}" -f $count, $code, $elapsed, $proc.Id)
+        if (Test-Path $PausedMarker) { Write-Log 'paused marker present; not restarting'; break }
+        [void]$recent.Add((Get-Date))
+        while ($recent.Count -gt 0 -and ((Get-Date) - $recent[0]).TotalSeconds -gt 300) { $recent.RemoveAt(0) }
+        if ($recent.Count -ge 10) {
+            Write-Log 'ten exits within five minutes; pausing 60s before the next start'
+            Start-Sleep -Seconds 60
+        } else {
+            if ($elapsed -ge 60000) { $backoff = 2 }
+            Start-Sleep -Seconds $backoff
+            $backoff = [Math]::Min(30, $backoff * 2)
+        }
+    }
+    $owner = (Get-Content -Path $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ("$owner".Trim() -eq "$PID") { Remove-Item $pidFile -Force -ErrorAction SilentlyContinue }
+}
+
+# ------------------------------------------------------------ probe --
+
+function Invoke-RestartProbe {
+    # Four throwaway tasks, each with the same restart-on-failure setting the
+    # services carry, each writing one line per run. After -ProbeMinutes the
+    # line counts say what the scheduler did. The file holds observations;
+    # the conclusion is the reader's.
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $dir = Join-Path $StateDir 'restart-probe'
+    if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $p1log = Join-Path $dir 'p1.log'
+    $p3log = Join-Path $dir 'p3.log'
+    $p4log = Join-Path $dir 'p4.log'
+    $p3shim = Join-Path $dir 'p3.vbs'
+    $p3cmd = ('cmd.exe /c ""echo %DATE% %TIME% >> ""{0}"" & exit 1""' -f $p3log)
+    Set-Content -Path $p3shim -Value ("Dim shell`r`nSet shell = CreateObject(""Wscript.Shell"")`r`nWScript.Quit shell.Run(""{0}"", 0, True)" -f $p3cmd) -Encoding ascii
+    $probes = @(
+        @{ Name = 'p1'; What = 'cmd exit 1'; Execute = 'cmd.exe'; Argument = ('/c "echo %DATE% %TIME% >> "{0}" & exit 1"' -f $p1log); Logon = 'Interactive'; Log = $p1log },
+        @{ Name = 'p2'; What = 'missing exe'; Execute = 'C:\does\not\exist\mcp-cli-probe.exe'; Argument = ''; Logon = 'Interactive'; Log = $null },
+        @{ Name = 'p3'; What = 'wscript shim around cmd exit 1'; Execute = 'wscript.exe'; Argument = ('"{0}"' -f $p3shim); Logon = 'Interactive'; Log = $p3log },
+        @{ Name = 'p4'; What = 'cmd exit 1 under S4U'; Execute = 'cmd.exe'; Argument = ('/c "echo %DATE% %TIME% >> "{0}" & exit 1"' -f $p4log); Logon = 'S4U'; Log = $p4log }
+    )
+    $startedAt = Get-Date
+    foreach ($p in $probes) {
+        $name = "$TaskPrefix-probe-$($p.Name)"
+        $p.Task = $name
+        $p.Error = $null
+        try {
+            $action = if ($p.Argument -ne '') { New-ScheduledTaskAction -Execute $p.Execute -Argument $p.Argument } else { New-ScheduledTaskAction -Execute $p.Execute }
+            $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType $p.Logon -RunLevel Limited
+            $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(15)
+            Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+            Write-Log "registered $name ($($p.What))"
+        } catch {
+            $p.Error = $_.Exception.Message
+            Write-Log "could not register $name ($($p.What)): $($p.Error)"
+        }
+    }
+    Write-Log "observing for $ProbeMinutes minutes"
+    Start-Sleep -Seconds ($ProbeMinutes * 60 + 20)
+    $events = @()
+    try {
+        $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-TaskScheduler/Operational'; StartTime = $startedAt } -ErrorAction Stop | Where-Object { $_.Message -match [regex]::Escape("$TaskPrefix-probe-") } | ForEach-Object { @{ time = $_.TimeCreated.ToString('o'); id = $_.Id; message = ($_.Message -replace '\s+', ' ').Substring(0, [Math]::Min(160, ($_.Message -replace '\s+', ' ').Length)) } })
+        $eventsNote = "$($events.Count) events read"
+    } catch {
+        $eventsNote = "operational log not readable: $($_.Exception.Message)"
+    }
+    $observations = @()
+    foreach ($p in $probes) {
+        $runs = 0
+        if ($null -ne $p.Log -and (Test-Path $p.Log)) { $runs = @(Get-Content $p.Log).Count }
+        $info = $null
+        try { $info = Get-ScheduledTaskInfo -TaskName $p.Task -ErrorAction Stop } catch { }
+        $obs = @{
+            probe = $p.Name; what = $p.What; task = $p.Task; principal = $p.Logon
+            restart = '3/PT1M'; observedMinutes = $ProbeMinutes
+            runsLogged = $(if ($null -ne $p.Log) { $runs } else { $null })
+            lastTaskResult = $(if ($null -ne $info) { $info.LastTaskResult } else { $null })
+            lastRunTime = $(if ($null -ne $info -and $null -ne $info.LastRunTime) { $info.LastRunTime.ToString('o') } else { $null })
+            numberOfMissedRuns = $(if ($null -ne $info) { $info.NumberOfMissedRuns } else { $null })
+            registrationError = $p.Error
+            eventCount = @($events | Where-Object { $_.message -match [regex]::Escape($p.Task) }).Count
+        }
+        $observations += $obs
+        Write-Log ("{0} ({1}): runsLogged={2} lastTaskResult={3} events={4}{5}" -f $p.Name, $p.What, $obs.runsLogged, $obs.lastTaskResult, $obs.eventCount, $(if ($p.Error) { " registrationError=$($p.Error)" } else { '' }))
+        try { Unregister-ScheduledTask -TaskName $p.Task -Confirm:$false -ErrorAction SilentlyContinue } catch { }
+    }
+    $result = @{
+        probedAt = $startedAt.ToString('o'); build = [System.Environment]::OSVersion.VersionString
+        observedMinutes = $ProbeMinutes; eventsNote = $eventsNote; probes = $observations; events = $events
+    }
+    ($result | ConvertTo-Json -Depth 6) | Set-Content -Path $ProbeResult -Encoding utf8
+    Write-Log "wrote $ProbeResult"
+}
+
 # ---------------------------------------------------------------- status --
+
+function Get-LastLogAge {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    $last = Get-Content -Path $Path -Tail 1 -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($last)) { return $null }
+    $stamp = $last.Substring(0, [Math]::Min(19, $last.Length))
+    $when = [datetime]::MinValue
+    if (-not [datetime]::TryParseExact($stamp, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$when)) { return $null }
+    return @{ Age = [int]((Get-Date) - $when).TotalSeconds; Line = $last }
+}
+
+function Show-Recovery {
+    Write-Output 'recovery'
+    foreach ($kind in @('daemon', 'bridge')) {
+        if ($kind -eq 'bridge' -and $NoBridge) { continue }
+        $sup = Get-SupervisorProcess $kind
+        $log = Get-SupervisorLog $kind
+        $restarts = 0
+        $lastRestart = ''
+        if (Test-Path $log) {
+            $lines = @(Get-Content -Path $log -ErrorAction SilentlyContinue | Where-Object { $_ -match ' restart n=' })
+            $restarts = $lines.Count
+            if ($restarts -gt 0) { $lastRestart = ($lines[-1] -split ' ', 2)[0] }
+        }
+        $state = if ($null -ne $sup) { "running pid=$($sup.ProcessId)" } else { 'absent' }
+        Write-Output ("  {0,-8} supervisor {1} restarts={2}{3}" -f $kind, $state, $restarts, $(if ($lastRestart) { " last=$lastRestart" } else { '' }))
+    }
+    $tick = Get-LastLogAge $WatchdogLog
+    if ($null -eq $tick) {
+        Write-Output '  watchdog no tick recorded in this state directory'
+    } else {
+        Write-Output ("  watchdog last tick {0}s ago{1}" -f $tick.Age, $(if ($tick.Age -gt 300) { ' (STALE: more than 300s)' } else { '' }))
+    }
+    $task = Get-TaskOrNull $TaskDaemon
+    $configured = if ($null -ne $task) { "$($task.Settings.RestartCount)/$($task.Settings.RestartInterval)" } else { 'no task' }
+    if (Test-Path $ProbeResult) {
+        try {
+            $probe = Get-Content -Raw $ProbeResult | ConvertFrom-Json
+            $parts = @($probe.probes | ForEach-Object {
+                $runs = if ($null -ne $_.runsLogged) { "runs=$($_.runsLogged)" } else { "result=$($_.lastTaskResult)" }
+                "$($_.probe) $($_.what): $runs events=$($_.eventCount)$(if ($_.registrationError) { ' (not registered)' } else { '' })"
+            })
+            Write-Output ("  scheduler restart-on-failure configured {0}; probe {1} over {2} min: {3}" -f $configured, $probe.probedAt.Substring(0, 10), $probe.observedMinutes, ($parts -join '; '))
+        } catch {
+            Write-Output "  scheduler restart-on-failure configured $configured; probe file unreadable: $ProbeResult"
+        }
+    } else {
+        Write-Output "  scheduler restart-on-failure configured $configured; not probed on this box (run -Action probe-restart)"
+    }
+}
 
 function Show-Status {
     Write-Output "root      $Root"
@@ -357,8 +627,7 @@ function Show-Status {
     }
     foreach ($kind in @('daemon', 'bridge')) {
         $port = if ($kind -eq 'daemon') { $DaemonPort } else { $BridgePort }
-        $path = if ($kind -eq 'daemon') { '/status' } else { '/status' }
-        $json = Get-HealthJson $port $path
+        $json = Get-HealthJson $port '/status'
         $procs = @(Get-ServiceProcesses $kind | ForEach-Object { "pid=$($_.ProcessId) since=$($_.CreationDate)" })
         if ($null -eq $json) {
             Write-Output "${kind}    port ${port}: NOT ANSWERING; node: $(if ($procs.Count) { $procs -join ', ' } else { 'none' })"
@@ -370,6 +639,7 @@ function Show-Status {
             Write-Output "${kind}    port ${port}: pid=$($json.pid) up=$($json.uptimeSeconds)s auth=$($json.auth) active=$($json.active) queued=$($json.queued)"
         }
     }
+    Show-Recovery
 }
 
 # --------------------------------------------------------------- actions --
@@ -411,7 +681,7 @@ switch ($Action) {
         $ok = $true
         if ($Restart -or -not (Test-Health $DaemonPort '/health/live')) { $ok = (Start-Service 'daemon' $TaskDaemon $DaemonPort '/health/ready' 90) -and $ok } else { Write-Log 'daemon already healthy; left running (use -Restart to load the new build)' }
         if (-not $NoBridge) {
-            if ($Restart -or -not (Test-Health $BridgePort '/health/live')) { $ok = (Start-Service 'bridge' $TaskBridge $BridgePort '/health/live' 60) -and $ok } else { Write-Log 'bridge already healthy; left running (use -Restart to load the new build)' }
+            if ($Restart -or -not (Test-Health $BridgePort '/health/live')) { $ok = (Start-Service 'bridge' $TaskBridge $BridgePort '/health/ready' 60) -and $ok } else { Write-Log 'bridge already healthy; left running (use -Restart to load the new build)' }
         }
         Show-Status
         if (-not $ok) { exit 1 }
@@ -433,6 +703,11 @@ switch ($Action) {
             exit 1
         }
     }
+    'run' {
+        if ($Service -eq '') { throw '-Action run needs -Service daemon or -Service bridge' }
+        Invoke-Supervisor $Service
+    }
+    'probe-restart' { Invoke-RestartProbe }
     'rollback' {
         $dir = $Backup
         if ($dir -eq '') {
@@ -475,10 +750,10 @@ switch ($Action) {
     'pause' {
         if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
         Set-Content -Path $PausedMarker -Value (Get-Date).ToString('o') -Encoding ascii
-        Write-Log "paused: the watchdog will report but not restart (marker $PausedMarker)"
+        Write-Log "paused: the watchdog will report but not restart, and a supervisor exits after its next node exit (marker $PausedMarker)"
     }
     'resume' {
         if (Test-Path $PausedMarker) { Remove-Item $PausedMarker -Force }
-        Write-Log 'resumed: the watchdog restarts again'
+        Write-Log 'resumed: the watchdog restarts again; a supervisor that exited is started by the watchdog on its next tick'
     }
 }

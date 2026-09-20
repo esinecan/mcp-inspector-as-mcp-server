@@ -698,12 +698,15 @@ drops a warm session after a connection failure so the next call connects
 fresh, and answers every failure with the class the caller's executor reads.
 
 On Windows, `scripts/windows/mcp-cli-tasks.ps1 -Action install` registers the
-daemon and the bridge as scheduled tasks that start at logon and are checked
-every two minutes by a watchdog task that restarts whichever does not answer;
-the tasks also carry three one-minute restarts, which this Windows build was
-not seen to apply to an exit-code failure. `-Action status`, `repair`,
-`rollback` and `uninstall` do what they say, and every install backs up the
-previous task definitions first.
+daemon and the bridge as scheduled tasks that start at logon. Each task runs
+a supervisor loop that starts the process again within seconds of an exit,
+and a watchdog task checks both every two minutes and restarts whichever does
+not answer `/health/ready`. The scheduler's own restart-on-failure is
+configured and not relied on; `-Action probe-restart` records what it does on
+the box and `-Action status` quotes that as observed. `-Action status`,
+`repair`, `rollback` and `uninstall` do what they say, and every install backs
+up the previous task definitions first. See
+[docs/mcp-cli-daemon.md](docs/mcp-cli-daemon.md).
 
 With no daemon running, every command behaves exactly as it did before: a
 refused connection on 8791 means "no daemon", never a failure. `MCP_CLI_DAEMON=0`
@@ -810,6 +813,7 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+- The Windows tasks supervise their own process: a loop inside each service task restarts node within seconds of an exit, the watchdog probes `/health/ready` on both services and never starts a second loop, `status` prints a recovery block with the supervisor state, the watchdog tick age and the scheduler probe as observed, and `-Action probe-restart` measures the scheduler's restart-on-failure instead of assuming it
 - Added `mcp-cli auth login|status|logout|refresh`: OAuth for a URL server per the MCP authorization specification (revision 2025-11-25) through the SDK's own flow. The credential is DPAPI-protected on Windows and owner-only elsewhere, the sidecar holds nothing secret, a login closes the server's `auth_required` circuit and reconnects a warm daemon, and no lane ever opens a browser: a needed login is reported as `oauth_login_required`. Scope follows the specification; `auth.scope` is an explicit opt-in
 - Put one executor between every command and every server: operations instead of callbacks, one queue per server with the wait counted against the deadline, eight failure classes, one retry for reads and none for anything that may write, server and request circuits persisted across processes, a JSONL event log with trace ids, a `--json` failure envelope, and exit code 4 for a refusal before dispatch. See [docs/mcp-cli-supervision.md](docs/mcp-cli-supervision.md)
 - Added `mcp-cli search`: Google first, Brave when Google cannot answer, one row shape from either, and `mcp-cli circuits status|reset`

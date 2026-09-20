@@ -291,23 +291,43 @@ scripts/windows/
 
 `scripts/windows/mcp-cli-tasks.ps1 -Action install` registers three scheduled
 tasks for the interactive user: `mcp-cli-daemon`, `mcp-cli-bridge` and
-`mcp-cli-watchdog`. The two services start at logon, are set to restart three
-times a minute apart when they fail, and start when available if a trigger
-was missed. The action is a `wscript.exe` shim that waits for the node process
-and returns its exit code, so the task lives exactly as long as the process; a
-console action would flash a window at every start, and a detached child
-would give the scheduler nothing to watch.
+`mcp-cli-watchdog`. The two services start at logon and start when available
+if a trigger was missed. The action is a `wscript.exe` shim, so no console
+window flashes, and what the shim runs is this script's own supervisor loop
+(`-Action run -Service daemon|bridge`), which starts node, waits for it, logs
+its exit code and starts it again.
 
-The watchdog is the recovery that was seen to work. On this Windows 11 build
-the scheduler's restart-on-failure did not rerun a task whose action exited
-non-zero, whether the node process was killed or a probe task ran `cmd /c
-exit 1`; the setting evidently covers a failure to launch the action, not the
-action failing. It is configured as specified and costs nothing. The watchdog
-runs every two minutes, probes `/health/ready` on the daemon and
-`/health/live` on the bridge, and ends, kills and restarts a service that does
-not answer; a killed bridge was back within four seconds of the next tick. It
-logs one line per tick, so a log that stops growing means the watchdog itself
-stopped. `-Action pause` makes it look and not act. Every install writes the previous task
+The recovery contract, as measured:
+
+- A process that exits is started again by its supervisor within a few
+  seconds: 2 s of backoff, doubling to 30 s while it keeps failing, a 60 s
+  pause after ten exits in five minutes, and no giving up. The supervisor
+  writes `<StateDir>/<service>-supervisor.log` and its pid to
+  `<service>-supervisor.pid`.
+- A process that is alive but not answering `/health/ready`, on either
+  service, is caught by the watchdog on its next tick, at most two minutes
+  later. When the supervisor is alive the watchdog kills node alone and the
+  supervisor starts it; when the supervisor is gone the watchdog ends the
+  task, kills the supervisor's pid and any node still holding the port, and
+  starts the task. Only one supervisor ever runs per service: a start is
+  refused while a living supervisor holds the pid file.
+- A task that is not running at all is started by the watchdog on its next
+  tick.
+- The scheduler's own restart-on-failure is configured on both service tasks
+  (three restarts a minute apart) and is not relied on. `-Action
+  probe-restart` registers four throwaway tasks with the same setting, a
+  `cmd /c exit 1`, a missing executable, the same exit under a `wscript`
+  shim and the same exit under an S4U principal, observes them for four
+  minutes, and writes what it saw to `<StateDir>/restart-probe.json`: run
+  counts, last results, and the Task Scheduler operational events when that
+  log is readable. `-Action status` quotes those counts as observed and
+  claims nothing the file does not show.
+
+The watchdog logs one line per tick, so a log that stops growing means the
+watchdog itself stopped; `-Action status` prints the age of the last tick
+and marks it stale past five minutes. `-Action pause` makes the watchdog
+look and not act, and makes a supervisor exit after its next node exit;
+`-Action resume` lets the watchdog start it again. Every install writes the previous task
 definitions and shims to `~/.agents/mcp-cli-tasks/backup/<stamp>/`, and
 `-Action rollback` restores the newest one. `-Action status` prints the tasks,
 the ports and the node processes; `-Action repair` runs the watchdog once,
