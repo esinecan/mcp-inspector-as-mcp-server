@@ -52,6 +52,8 @@ interface DaemonAnswer {
   reason?: string;
   retryAfterMs?: number;
   remediation?: string;
+  /** The failure's own code, distinct from the daemon's `code`. */
+  failureCode?: string | number;
   dispatched?: boolean;
 }
 
@@ -122,6 +124,7 @@ export class DaemonLane implements Lane {
           message,
           ...(answer.retryAfterMs !== undefined ? { retryAfterMs: answer.retryAfterMs } : {}),
           ...(answer.remediation !== undefined ? { remediation: answer.remediation } : {}),
+          ...(answer.failureCode !== undefined ? { code: answer.failureCode } : {}),
           ...(answer.reason !== undefined ? { reason: answer.reason as RefusalReason } : {}),
           ...(answer.dispatched === false ? { notDispatched: true } : {}),
         });

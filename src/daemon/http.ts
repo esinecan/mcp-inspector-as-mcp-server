@@ -172,6 +172,9 @@ export function createDaemonHttpServer(options: DaemonHttpOptions): HttpServer {
             if (c.reason !== undefined) payload.reason = c.reason;
             if (c.retryAfterMs !== undefined) payload.retryAfterMs = c.retryAfterMs;
             if (c.remediation !== undefined) payload.remediation = c.remediation;
+            // The failure's own code (an oauth_* name, a JSON-RPC number) rides
+            // beside the daemon's code so the CLI's envelope can name it.
+            if (c.code !== undefined) payload.failureCode = c.code;
             if (c.notDispatched) payload.dispatched = false;
           }
           send(
