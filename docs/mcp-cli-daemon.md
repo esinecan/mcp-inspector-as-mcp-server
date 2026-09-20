@@ -233,6 +233,15 @@ its own environment, which is the environment of the shell that started it. A
 variable added after the daemon started is not visible to it. Restart the daemon
 after changing one.
 
+An OAuth credential is different: the daemon reads it from the credential
+store on every connect and records the store's stamp for the server beside
+the config file's mtime. `mcp-cli auth login`, `auth logout` and a refresh
+move that stamp, and a warm entry opened under the old credential is dropped
+the same way an edited config file drops it, so the next call reconnects
+with the new token and no restart is needed. The daemon never runs the
+interactive flow: a 401 with no stored token is answered
+`oauth_login_required`, and the login happens in the shell.
+
 ## The wire format
 
 One endpoint answers the seven operations. It is an implementation detail of the

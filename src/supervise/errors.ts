@@ -26,7 +26,8 @@ export interface FailureReport {
   reason?: RefusalReason;
   message: string;
   server: string;
-  operation: OperationKind;
+  /** One of the seven operations, or an `auth` verb when the failure came from a login. */
+  operation: OperationKind | `auth ${string}`;
   target?: string;
   attempts: number;
   trace: string;

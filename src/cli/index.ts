@@ -58,6 +58,7 @@ import {
   type Operation,
 } from "../supervise/index.js";
 import { cmdCircuits } from "./circuits.js";
+import { cmdAuth } from "./auth.js";
 import { cmdSearch } from "./search.js";
 import { credentialStoreFor } from "../auth/index.js";
 
@@ -77,6 +78,7 @@ Usage:
   mcp-cli prompt <server.name> [args]      get one prompt
   mcp-cli search <query> [--limit N]       web search, Google first and Brave when it fails
   mcp-cli circuits <status|reset> [server] what the supervisor refuses right now, and why
+  mcp-cli auth <login|status|logout|refresh> [server]  OAuth for a url server; login opens a browser
   mcp-cli import-claude                    build the config from ~/.claude.json
   mcp-cli bridge <serve|mcp|selftest|exec> run host commands over the path contract
   mcp-cli daemon <start|stop|status|serve> keep server connections warm between calls
@@ -98,6 +100,9 @@ Global flags:
   --port, --bind    with "bridge serve", the listening socket
   --port            with "daemon", its port (env MCP_CLI_DAEMON_PORT, default 8791)
   --log <path>      with "daemon serve" and "bridge serve", append the log there
+  --scope <s>       with "auth login", the OAuth scope to request (default: what the server names)
+  --callback-port <n>  with "auth login", the loopback port for the redirect (default 8792)
+  --no-browser      with "auth login", print the URL and open nothing
   --cwd, --stdin    with "bridge exec", the working directory and standard input
   --help, --version
 
@@ -163,6 +168,8 @@ export async function main(argv: string[]): Promise<number> {
         return await cmdSearch(args, context(args));
       case "circuits":
         return cmdCircuits(args, context(args));
+      case "auth":
+        return await cmdAuth(args);
       default:
         throw new UsageError(`Unknown command "${args.command}". Run mcp-cli --help.`);
     }

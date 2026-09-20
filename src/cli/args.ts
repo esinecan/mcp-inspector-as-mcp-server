@@ -44,6 +44,12 @@ export interface ParsedArgs {
   provider?: string;
   /** `--log`, where `daemon serve` and `bridge serve` append their log lines. */
   log?: string;
+  /** `--scope`, the OAuth scope `auth login` requests instead of the server's default. */
+  scope?: string;
+  /** `--callback-port`, the loopback port `auth login` listens on. */
+  callbackPort?: number;
+  /** `--no-browser`, print the authorization URL and open nothing. */
+  noBrowser: boolean;
 }
 
 /** The values `--format` accepts, shared with the config file's pruning block. */
@@ -67,6 +73,8 @@ const VALUE_FLAGS = new Set([
   "--limit",
   "--provider",
   "--log",
+  "--scope",
+  "--callback-port",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -77,6 +85,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     force: false,
     help: false,
     version: false,
+    noBrowser: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -110,6 +119,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         continue;
       case "--force":
         parsed.force = true;
+        continue;
+      case "--no-browser":
+        parsed.noBrowser = true;
         continue;
       case "--help":
       case "-h":
@@ -207,5 +219,17 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
     case "--log":
       parsed.log = value;
       return;
+    case "--scope":
+      if (value.trim().length === 0) throw new UsageError("--scope needs a non-empty value");
+      parsed.scope = value.trim();
+      return;
+    case "--callback-port": {
+      const port = Number(value);
+      if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        throw new UsageError(`--callback-port needs a TCP port number, got "${value}"`);
+      }
+      parsed.callbackPort = port;
+      return;
+    }
   }
 }

@@ -85,4 +85,4 @@ export {
   type CredentialRecord,
   type CredentialStore,
 } from "./store.js";
-export { login, type LoginSummary } from "./login.js";
+export { login, refresh, type LoginSummary, type RefreshSummary } from "./login.js";

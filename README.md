@@ -275,13 +275,16 @@ One JSON file, by default `~/.agents/mcp-cli.json`. Override the path with
     "forum":   { "command": "node", "args": ["C:/Users/you/dev/forum/index.js"] },
     "gsearch": { "url": "http://127.0.0.1:8766/mcp" },
     "remote":  { "url": "https://example.test/mcp",
-                 "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" } }
+                 "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" } },
+    "hosted":  { "url": "https://mcp.example.com/mcp",
+                 "auth": { "type": "oauth", "scope": "files:read" } }
   },
   "profiles": {
     "default": { "block": [] },
     "safe":    { "block": ["gmail.send_*", "forum.post", "linkedin.*"] },
     "housing": { "extends": "safe", "block": ["cortex.*"] }
-  }
+  },
+  "auth": { "store": "dpapi", "callbackPort": 8792, "clientName": "mcp-cli" }
 }
 ```
 
@@ -301,8 +304,67 @@ browser profile or a single port, must run once as a daemon and be reached
 through a `url` entry. On this box `google-search` is that case, at
 `http://127.0.0.1:8766/mcp`.
 
-OAuth is out of scope. A server that answers HTTP 401 to an unauthenticated
-connection is reported as a failure, and the rest of the fleet still works.
+### OAuth
+
+A URL server that answers HTTP 401 with an OAuth challenge is signed in to
+once, by a person, and called with the stored token from then on:
+
+```bash
+mcp-cli auth login scalable          # opens the browser; --no-browser prints the URL only
+mcp-cli auth status                  # one row per url server: state, expiry, scope, issuer
+mcp-cli auth refresh scalable        # renew through the refresh grant, no browser
+mcp-cli auth logout scalable         # remove the stored credential
+```
+
+The flow is the MCP authorization specification, revision 2025-11-25, as the
+SDK implements it: the `WWW-Authenticate` challenge names the resource
+metadata, the metadata names the authorization server, the client registers
+itself dynamically when it has no pre-registered id, PKCE S256 and the
+RFC 8707 `resource` parameter are always sent, and the redirect lands on
+`http://127.0.0.1:8792/callback` (`auth.callbackPort`, or `--callback-port`).
+`login` starts the listener first, prints the URL, waits up to five minutes
+for the callback, exchanges the code, and proves the token with one
+`tools/list` before it reports success.
+
+**Scope follows the specification.** The client requests the scope the 401
+challenge names, else the `scopes_supported` of the resource metadata, else
+none. A per-server `auth.scope` is an explicit opt-in that widens the grant;
+`--scope` on `login` does the same for one login. Nothing is added to obtain a
+refresh token: whether one is issued is what `auth status` reports as
+`refreshable`.
+
+**Where the credential lives.** Under `<stateDir>/auth/` (default
+`~/.agents/mcp-cli-state/auth/`), one `<server>.cred` per server holding the
+tokens, the client registration and the discovery state as one blob, and one
+`<server>.meta.json` sidecar holding only what may be read in the open: the
+issuer, the client id, the scope, the expiry, and the time of the last write.
+On Windows the blob is protected with DPAPI in the current user's scope, with
+the server URL as entropy, so it opens only for this user on this machine and
+only under this server name (`auth.store: "dpapi"`, the default there).
+Elsewhere, or with `auth.store: "file"`, it is a plain file with owner-only
+permissions, and `login` says so. The config file never holds a token: an
+`auth` block that contains one is rejected, and a pre-registered client's
+secret is named by `clientSecretEnv`, the way the bridge names its token.
+
+**What is never printed.** `auth status` and `auth login` print the issuer,
+the client id, the scope, the expiry and whether a refresh token is held;
+never a token, a code or a verifier. Failure messages, the circuit file and
+the event log pass through the same redaction as every other failure, which
+also covers authorization codes and verifiers.
+
+**A call never opens a browser.** Every lane runs headless: the stored token
+goes on every request, a 401 runs the refresh grant when a refresh token is
+held, and a login that would be needed is refused as `auth_required` with
+the code `oauth_login_required` and the remediation `mcp-cli auth login
+<server>`. A refresh the server refuses deletes the tokens and reports the
+same code with the note `previous session expired`. A 403 `insufficient_scope`
+is `oauth_insufficient_scope`, with the required scope in the remediation. A
+login moves the credential's stamp, which closes the server's `auth_required`
+circuit on the next call and makes a running daemon reconnect with the new
+token; no `circuits reset` and no restart is needed.
+
+A server that answers 401 with no OAuth challenge is reported as before: an
+`auth_required` failure that points at the `${NAME}` header it was given.
 
 ### Profiles
 
@@ -343,6 +405,16 @@ mcp-cli servers
 
 mcp-cli tools forum
 # forum.post  Post a message to the forum bulletin board...
+
+mcp-cli auth login hosted --no-browser
+# mcp-cli: Open this URL to sign in:
+# mcp-cli:   https://auth.example.com/authorize?client_id=...&code_challenge_method=S256&...
+# hosted: signed in via browser
+#   issuer      https://auth.example.com/
+#   scope       files:read offline_access
+#   expires     2026-09-21T12:00:00.000Z
+#   refreshable yes
+#   tools       12
 # forum.poll  List subject lines of board messages you have not seen...
 
 mcp-cli tools
@@ -738,6 +810,7 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+- Added `mcp-cli auth login|status|logout|refresh`: OAuth for a URL server per the MCP authorization specification (revision 2025-11-25) through the SDK's own flow. The credential is DPAPI-protected on Windows and owner-only elsewhere, the sidecar holds nothing secret, a login closes the server's `auth_required` circuit and reconnects a warm daemon, and no lane ever opens a browser: a needed login is reported as `oauth_login_required`. Scope follows the specification; `auth.scope` is an explicit opt-in
 - Put one executor between every command and every server: operations instead of callbacks, one queue per server with the wait counted against the deadline, eight failure classes, one retry for reads and none for anything that may write, server and request circuits persisted across processes, a JSONL event log with trace ids, a `--json` failure envelope, and exit code 4 for a refusal before dispatch. See [docs/mcp-cli-supervision.md](docs/mcp-cli-supervision.md)
 - Added `mcp-cli search`: Google first, Brave when Google cannot answer, one row shape from either, and `mcp-cli circuits status|reset`
 - The daemon prewarms the servers `daemon.prewarm` names, serialises per server, drops a dead warm session, answers `/health/live` and `/health/ready`, and logs to a file with `--log`

@@ -174,3 +174,58 @@ async function prove(
     }
   }
 }
+
+export interface RefreshOptions {
+  server: string;
+  entry: ServerEntry;
+  store: CredentialStore;
+  settings: AuthSettings;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface RefreshSummary {
+  server: string;
+  expiresAt?: string;
+  refreshable: boolean;
+}
+
+/**
+ * Renew the access token through the refresh grant, without a browser. The
+ * SDK's flow tries the refresh first whenever a refresh token is held; a
+ * headless provider turns any fall-through to a redirect into
+ * `oauth_login_required`, which is the honest answer when the refresh token
+ * is gone or refused.
+ */
+export async function refresh(options: RefreshOptions): Promise<RefreshSummary> {
+  const { server, entry, store, settings } = options;
+  if (!entry.url) {
+    throw new ClassifiedError({
+      class: "bad_argument",
+      code: "oauth_not_http",
+      message: `${server} is a stdio server; OAuth applies to HTTP servers only`,
+    });
+  }
+  const provider = providerFor(server, entry, store, settings, "headless", { env: options.env });
+  const record = await provider.current().catch((err) => {
+    throw classifyOAuthFailure(err, server);
+  });
+  if (record?.tokens?.refresh_token === undefined) {
+    throw new ClassifiedError({
+      class: "auth_required",
+      code: "oauth_login_required",
+      message: `${server}: no refresh token is stored; a browser login is the only way to a new token`,
+      remediation: `Run: mcp-cli auth login ${server}`,
+    });
+  }
+  try {
+    const result = await auth(provider, { serverUrl: entry.url });
+    if (result !== "AUTHORIZED") throw new Error("the refresh did not authorize");
+  } catch (err) {
+    throw classifyOAuthFailure(err, server);
+  }
+  const after = await provider.current();
+  const meta = store.meta(server);
+  const summary: RefreshSummary = { server, refreshable: meta?.refreshable === true };
+  if (after?.expiresAt !== undefined) summary.expiresAt = new Date(after.expiresAt).toISOString();
+  return summary;
+}

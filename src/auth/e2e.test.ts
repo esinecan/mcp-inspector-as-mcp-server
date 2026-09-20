@@ -10,7 +10,7 @@ import { memoryStateStore } from "../supervise/store.js";
 import type { CliConfig } from "../cli/config.js";
 import { credentialStore, type CredentialStore } from "./store.js";
 import { authSettings } from "./index.js";
-import { login } from "./login.js";
+import { login, refresh } from "./login.js";
 // The fixture is plain ESM without types; the test reads it through a narrow shape.
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
@@ -269,5 +269,42 @@ describe("after login", () => {
     await scriptedLogin(cfg);
     expect(store.meta("mock")?.clientId).not.toBe(first);
     expect(store.meta("mock")?.redirectPort).toBe(callbackPort);
+  });
+});
+
+describe("explicit refresh", () => {
+  it("performs one refresh grant and moves the stored expiry", async () => {
+    const cfg = config({ auth: { type: "oauth", scope: "mock:read" } });
+    await scriptedLogin(cfg);
+    const before = store.meta("mock");
+    await new Promise((done) => setTimeout(done, 1100));
+    fixture.events.length = 0;
+    const summary = await refresh({
+      server: "mock",
+      entry: cfg.mcpServers.mock,
+      store,
+      settings: authSettings(cfg, "linux"),
+    });
+    expect(
+      fixture.events.filter((e) => e.startsWith("token grant_type=refresh_token")),
+    ).toHaveLength(1);
+    expect(summary.refreshable).toBe(true);
+    expect((store.meta("mock")?.expiresAt ?? 0) > (before?.expiresAt ?? 0)).toBe(true);
+    expect(store.meta("mock")?.updatedAt).not.toBe(before?.updatedAt);
+  });
+
+  it("asks for a login when no refresh token is held", async () => {
+    // No scope: the fixture issues no refresh token without offline_access.
+    const cfg = config();
+    await scriptedLogin(cfg);
+    expect(store.meta("mock")?.refreshable).toBe(false);
+    await expect(
+      refresh({
+        server: "mock",
+        entry: cfg.mcpServers.mock,
+        store,
+        settings: authSettings(cfg, "linux"),
+      }),
+    ).rejects.toMatchObject({ class: "auth_required", code: "oauth_login_required" });
   });
 });

@@ -40,7 +40,7 @@ code, else from its text.
 
 | Class           | Meaning                                                     | Retried             | Opens                              |
 | --------------- | ----------------------------------------------------------- | ------------------- | ---------------------------------- |
-| `auth_required` | credentials refused, expired, or an unset `${VAR}`          | no                  | the server circuit, at once        |
+| `auth_required` | credentials refused, expired, an unset `${VAR}`, or an OAuth login needed | no       | the server circuit, at once        |
 | `rate_limited`  | 429, quota, Google's `/sorry/` page                         | after Retry-After   | the server circuit, at once        |
 | `transient`     | connection closed, refused, reset, 502/503                  | once, reads only    | the server circuit, after three    |
 | `timeout`       | the budget passed                                           | once, reads only    | counts as transient                |
@@ -87,7 +87,25 @@ named; each failure while open doubles it, up to fifteen minutes. After the
 cooldown one probe goes through; success closes the circuit, failure reopens
 it for twice as long. An auth circuit also closes when the credentials it saw
 fail change, which the executor detects from a fingerprint of the `${VAR}`
-values the entry resolves.
+values the entry resolves and of the credential store's stamp for the server,
+which every `auth login`, `auth logout` and refresh moves.
+
+## OAuth codes
+
+An `auth_required` failure that came out of the OAuth flow carries a `code`
+that names the next move, and a remediation that names the command:
+
+| `code`                     | Meaning                                                        | Remediation                                   |
+| -------------------------- | -------------------------------------------------------------- | --------------------------------------------- |
+| `oauth_login_required`     | no token is stored, or the refresh grant was refused           | `mcp-cli auth login <server>`                 |
+| `oauth_token_rejected`     | the server refused a token this process had just renewed       | `auth logout <server> && auth login <server>` |
+| `oauth_insufficient_scope` | 403 `insufficient_scope`; the required scope is in the message | `auth login <server> --scope "<required>"`    |
+| `oauth_store_unreadable`   | the stored credential cannot be decrypted or parsed            | `auth logout <server> && auth login <server>` |
+
+An authorization server that refuses the flow itself (no PKCE, an insecure
+token endpoint, an issuer that does not match, a registration it rejects) is
+`structural` with the code `oauth_<reason>`, because no login would change
+it. An authorization server that cannot be reached is `transient`.
 
 A request circuit refuses one exact request: the same server, target and
 argument digest. It opens on a structural failure, so a request the server
