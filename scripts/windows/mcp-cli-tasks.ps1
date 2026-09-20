@@ -38,8 +38,9 @@
     node, reads the exit code, logs it, and starts node again.
 
     The watchdog probes /health/ready on both services. When the supervisor
-    loop is alive and only node is unhealthy, it kills node and lets the loop
-    start it. When the loop is gone, it ends the task, kills the loop's pid
+    loop is alive and only node is unhealthy, it waits fifteen seconds (a
+    tick can land inside the loop's own restart window), then kills node and
+    lets the loop start it. When the loop is gone, it ends the task, kills the loop's pid
     and any node still holding the port, and starts the task again. A
     `paused` marker in the state directory makes the loop exit after the next
     node exit and makes the watchdog look and not act.
@@ -410,8 +411,15 @@ function Invoke-Watch {
         }
         $sup = Get-SupervisorProcess $s.Kind
         if ($null -ne $sup) {
-            # The loop is alive: node is hung or not ready. Kill node alone and
-            # let the loop start it; no second loop is started.
+            # The loop is alive. A tick that lands inside the loop's own restart
+            # window would kill a node that is still starting, so give it
+            # fifteen seconds before deciding it is hung.
+            if (Wait-Health $s.Kind $s.Port $s.Path 15) {
+                $results[$s.Kind] = 'healthy after grace'
+                continue
+            }
+            # Node is hung or not ready. Kill node alone and let the loop start
+            # it; no second loop is started.
             Write-Log "$($s.Kind) unhealthy on port $($s.Port); supervisor pid $($sup.ProcessId) alive, killing node for it to restart"
             foreach ($p in @(Get-ServiceProcesses $s.Kind)) {
                 Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
@@ -456,6 +464,9 @@ function Invoke-Supervisor {
         $argList = @('"' + $Entry + '"', $verb, 'serve', '--port', $port, '--config', ('"' + $Config + '"'), '--log', ('"' + $logFile + '"'))
         try {
             $proc = Start-Process -FilePath $nodeExe -ArgumentList $argList -NoNewWindow -PassThru
+            # Touch the handle now: without it, ExitCode reads null after the
+            # process is gone.
+            $null = $proc.Handle
         } catch {
             Write-Log "could not start node: $($_.Exception.Message)"
             Start-Sleep -Seconds 30
@@ -507,6 +518,7 @@ function Invoke-RestartProbe {
         @{ Name = 'p4'; What = 'cmd exit 1 under S4U'; Execute = 'cmd.exe'; Argument = ('/c "echo %DATE% %TIME% >> "{0}" & exit 1"' -f $p4log); Logon = 'S4U'; Log = $p4log }
     )
     $startedAt = Get-Date
+    $triggerAt = $startedAt.AddSeconds(15)
     foreach ($p in $probes) {
         $name = "$TaskPrefix-probe-$($p.Name)"
         $p.Task = $name
@@ -514,7 +526,7 @@ function Invoke-RestartProbe {
         try {
             $action = if ($p.Argument -ne '') { New-ScheduledTaskAction -Execute $p.Execute -Argument $p.Argument } else { New-ScheduledTaskAction -Execute $p.Execute }
             $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType $p.Logon -RunLevel Limited
-            $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(15)
+            $trigger = New-ScheduledTaskTrigger -Once -At $triggerAt
             Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
             Write-Log "registered $name ($($p.What))"
         } catch {
@@ -540,6 +552,7 @@ function Invoke-RestartProbe {
         $obs = @{
             probe = $p.Name; what = $p.What; task = $p.Task; principal = $p.Logon
             restart = '3/PT1M'; observedMinutes = $ProbeMinutes
+            triggerAt = $triggerAt.ToString('o')
             runsLogged = $(if ($null -ne $p.Log) { $runs } else { $null })
             lastTaskResult = $(if ($null -ne $info) { $info.LastTaskResult } else { $null })
             lastRunTime = $(if ($null -ne $info -and $null -ne $info.LastRunTime) { $info.LastRunTime.ToString('o') } else { $null })
@@ -601,7 +614,13 @@ function Show-Recovery {
             $probe = Get-Content -Raw $ProbeResult | ConvertFrom-Json
             $parts = @($probe.probes | ForEach-Object {
                 $runs = if ($null -ne $_.runsLogged) { "runs=$($_.runsLogged)" } else { "result=$($_.lastTaskResult)" }
-                "$($_.probe) $($_.what): $runs events=$($_.eventCount)$(if ($_.registrationError) { ' (not registered)' } else { '' })"
+                # The trigger and the last run side by side: a last run minutes
+                # after the trigger is the scheduler running the task again.
+                $when = ''
+                $hasTrigger = $null -ne $_.PSObject.Properties['triggerAt'] -and $_.triggerAt
+                $hasLastRun = $null -ne $_.PSObject.Properties['lastRunTime'] -and $_.lastRunTime
+                if ($hasTrigger -and $hasLastRun) { $when = " trigger=$($_.triggerAt.Substring(11, 8)) lastRun=$($_.lastRunTime.Substring(11, 8))" }
+                "$($_.probe) $($_.what): $runs$when events=$($_.eventCount)$(if ($_.registrationError) { ' (not registered)' } else { '' })"
             })
             Write-Output ("  scheduler restart-on-failure configured {0}; probe {1} over {2} min: {3}" -f $configured, $probe.probedAt.Substring(0, 10), $probe.observedMinutes, ($parts -join '; '))
         } catch {

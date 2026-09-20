@@ -306,8 +306,10 @@ The recovery contract, as measured:
   `<service>-supervisor.pid`.
 - A process that is alive but not answering `/health/ready`, on either
   service, is caught by the watchdog on its next tick, at most two minutes
-  later. When the supervisor is alive the watchdog kills node alone and the
-  supervisor starts it; when the supervisor is gone the watchdog ends the
+  later. When the supervisor is alive the watchdog waits fifteen seconds
+  for the process to answer, so a tick that lands inside the supervisor's own
+  restart window kills nothing, then kills node alone and the supervisor
+  starts it; when the supervisor is gone the watchdog ends the
   task, kills the supervisor's pid and any node still holding the port, and
   starts the task. Only one supervisor ever runs per service: a start is
   refused while a living supervisor holds the pid file.
