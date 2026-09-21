@@ -255,3 +255,78 @@ describe("a port in use stops the login before anything else", () => {
     }
   });
 });
+
+describe("a scope the config widens is a step-up too", () => {
+  it("config auth.scope growing after a grant forces a fresh authorization for the union", async () => {
+    await scriptedLogin(config(fixture.url, { auth: { type: "oauth", scope: "mock:read" } }));
+    expect(store.meta("mock")?.scope).toBe("mock:read offline_access");
+    fixture.events.length = 0;
+    const urls: string[] = [];
+    callbackPort += 1;
+    const wider = await scriptedLogin(
+      config(fixture.url, { auth: { type: "oauth", scope: "mock:read extra:read" } }),
+      undefined,
+      (url) => urls.push(url),
+    );
+    expect(wider.via).toBe("browser");
+    const requested = new URL(urls[0]).searchParams.get("scope") ?? "";
+    expect(requested.split(" ")).toEqual(
+      expect.arrayContaining(["mock:read", "extra:read", "offline_access"]),
+    );
+    expect(
+      fixture.events.filter((e) => e.startsWith("token grant_type=refresh_token")),
+    ).toHaveLength(0);
+    expect(store.meta("mock")?.scope?.split(" ")).toEqual(expect.arrayContaining(["extra:read"]));
+  }, 30_000);
+
+  it("an unchanged config scope lets a plain login refresh", async () => {
+    const cfg = config(fixture.url, { auth: { type: "oauth", scope: "mock:read" } });
+    await scriptedLogin(cfg);
+    fixture.events.length = 0;
+    callbackPort += 1;
+    const again = await scriptedLogin(cfg);
+    expect(again.via).toBe("refresh");
+    expect(
+      fixture.events.filter((e) => e.startsWith("token grant_type=refresh_token")),
+    ).toHaveLength(1);
+  }, 20_000);
+
+  it("sends no scope when neither challenge, resource metadata, config nor CLI names one", async () => {
+    const urls: string[] = [];
+    await scriptedLogin(config(fixture.url), undefined, (url) => urls.push(url));
+    expect(new URL(urls[0]).searchParams.has("scope")).toBe(false);
+  }, 20_000);
+});
+
+describe("a damaged credential does not hold the callback port", () => {
+  it("rejects before the listener exists, never calls onUrl, and the port binds at once", async () => {
+    const broken: CredentialStore = {
+      ...store,
+      load: async () => {
+        throw new Error("blob unreadable");
+      },
+      meta: () => undefined,
+    };
+    let urlSeen = false;
+    await expect(
+      login({
+        server: "mock",
+        entry: config(fixture.url).mcpServers.mock,
+        store: broken,
+        settings: authSettings(config(fixture.url), "linux"),
+        callbackPort,
+        timeoutMs: 60_000,
+        onUrl: () => {
+          urlSeen = true;
+        },
+      }),
+    ).rejects.toMatchObject({ class: "auth_required" });
+    expect(urlSeen).toBe(false);
+    const probe = createServer(() => {});
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen(callbackPort, "127.0.0.1", resolve);
+    });
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+  });
+});

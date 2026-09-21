@@ -9,7 +9,12 @@
  * the command reports success, so "logged in" means "the server answered".
  */
 
-import { auth, Client, computeScopeUnion } from "@modelcontextprotocol/client";
+import {
+  auth,
+  Client,
+  computeScopeUnion,
+  isStrictScopeSuperset,
+} from "@modelcontextprotocol/client";
 import { createTransport, versionNegotiationFor, type TransportConfig } from "../transport.js";
 import { CLIENT_NAME, CLIENT_VERSION } from "../cli/server-session.js";
 import type { ServerEntry } from "../cli/config.js";
@@ -87,19 +92,31 @@ export async function login(options: LoginOptions): Promise<LoginSummary> {
     await provider.invalidateCredentials("client");
   }
 
+  // Everything that can fail on the stored credential happens before the
+  // port is taken, so a damaged record never leaves the port held.
+  let previousScope: string | undefined;
+  try {
+    previousScope = (await provider.current())?.tokens?.scope;
+  } catch (err) {
+    throw classifyOAuthFailure(err, server);
+  }
+
+  // The scope asked for is the CLI's, else the config's. When it names a
+  // permission the server has not granted yet, the login is a step-up: the
+  // union of granted and requested, through a fresh authorization request,
+  // because a refresh grant cannot widen a scope (RFC 6749 §6). When it names
+  // nothing new, a refresh may serve. When nothing names a scope at all, none
+  // is sent, as the specification says.
+  const requested = options.scope ?? entry.auth?.scope;
+  const scope = requested !== undefined ? computeScopeUnion(previousScope, requested) : undefined;
+  const forceReauthorization =
+    requested !== undefined && isStrictScopeSuperset(scope, previousScope);
+
   const listener = listenForCallback({
     port: requestedPort,
     timeoutMs: options.timeoutMs,
     stateMatches: (state) => provider.stateMatches(state),
   });
-
-  // An explicit scope is a step-up: the union of what the server granted
-  // before and what is asked for now, through a fresh authorization request,
-  // because a refresh grant cannot widen a scope (RFC 6749 §6).
-  const previousScope = (await provider.current())?.tokens?.scope;
-  const scope =
-    options.scope !== undefined ? computeScopeUnion(previousScope, options.scope) : undefined;
-  const forceReauthorization = options.scope !== undefined;
 
   let via: LoginSummary["via"];
   try {

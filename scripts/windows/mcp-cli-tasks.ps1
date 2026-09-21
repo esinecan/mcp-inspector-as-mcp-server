@@ -453,14 +453,25 @@ function Invoke-Supervisor {
     $verb = if ($Kind -eq 'daemon') { 'daemon' } else { 'bridge' }
     $pidFile = Get-SupervisorPidFile $Kind
     if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
-    # Ownership before anything else: a living supervisor of this service and
-    # prefix keeps the pid file, and this one leaves without starting a loop.
-    $owner = Get-SupervisorProcess $Kind
-    if ($null -ne $owner -and [int]$owner.ProcessId -ne [int]$PID) {
-        Write-Log "another supervisor (pid $($owner.ProcessId)) owns $Kind; not starting a second loop"
+    # Ownership is the pid file's write handle, held for the life of the loop
+    # and granted by the operating system to exactly one process: the file is
+    # opened for writing with read-only sharing, so a second supervisor's open
+    # fails with a sharing violation whether it started a second earlier or a
+    # second later, and a dead owner's stale file opens freely because its
+    # handle died with it. Readers (the watchdog, status) still read the pid.
+    $lock = $null
+    try {
+        $lock = [System.IO.File]::Open($pidFile, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::Read)
+    } catch [System.IO.IOException] {
+        $owner = Get-SupervisorProcess $Kind
+        $who = if ($null -ne $owner) { "pid $($owner.ProcessId)" } else { 'an unknown process' }
+        Write-Log "another supervisor ($who) holds $pidFile for $Kind; not starting a second loop"
         exit 3
     }
-    Set-Content -Path $pidFile -Value $PID -Encoding ascii
+    $lock.SetLength(0)
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes("$PID`r`n")
+    $lock.Write($bytes, 0, $bytes.Length)
+    $lock.Flush()
     Write-Log "supervisor pid $PID for $Kind on port $port; entry $Entry"
     $count = 0
     $backoff = 2
@@ -498,8 +509,8 @@ function Invoke-Supervisor {
             $backoff = [Math]::Min(30, $backoff * 2)
         }
     }
-    $owner = (Get-Content -Path $pidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ("$owner".Trim() -eq "$PID") { Remove-Item $pidFile -Force -ErrorAction SilentlyContinue }
+    $lock.Close()
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
 }
 
 # ------------------------------------------------------------ probe --

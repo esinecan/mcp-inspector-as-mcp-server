@@ -50,7 +50,7 @@ describe.runIf(onWindows)("the lifecycle script's default invocation", () => {
       expect(run.stdout).toContain(`entry     ${resolve("dist", "cli", "index.js")}`);
       expect(run.stdout).toMatch(/daemon {4}port 1: NOT ANSWERING/);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
     }
   }, 90_000);
 });
@@ -152,7 +152,7 @@ describe.runIf(onWindows)("the recovery block of status", () => {
       expect(run.stdout).toContain("p4 cmd exit 1 under S4U: runs=0 events=0 (not registered)");
       expect(run.stdout).not.toMatch(/launch failures only/);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
     }
   }, 90_000);
 
@@ -189,7 +189,7 @@ describe.runIf(onWindows)("the recovery block of status", () => {
       expect(run.stdout).toContain("watchdog no tick recorded");
       expect(run.stdout).toContain("not probed on this box (run -Action probe-restart)");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
     }
   }, 90_000);
 
@@ -262,7 +262,7 @@ describe.runIf(onWindows)("the lifecycle script, review fixes", () => {
       expect(bridge).toContain("-Service bridge");
       void nodeExe;
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
     }
   }, 90_000);
 
@@ -327,11 +327,12 @@ describe.runIf(onWindows)("the lifecycle script, review fixes", () => {
       expect(second.status).toBe(3);
       expect(readFileSync(pidFile, "utf8").trim()).toBe(owner);
       const log = readFileSync(join(state, "daemon-supervisor.log"), "utf8");
-      expect(log).toMatch(new RegExp(`another supervisor \\(pid ${owner}\\) owns daemon`));
+      expect(log).toMatch(new RegExp(`another supervisor \\(pid ${owner}\\) holds .* for daemon`));
     } finally {
       if (first?.pid)
         spawnSync("taskkill", ["/PID", String(first.pid), "/T", "/F"], { stdio: "ignore" });
-      rmSync(dir, { recursive: true, force: true });
+      await new Promise((r) => setTimeout(r, 1500));
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
     }
   }, 120_000);
 
@@ -351,4 +352,93 @@ describe.runIf(onWindows)("the lifecycle script, review fixes", () => {
       noBridge.indexOf("Unregister-ScheduledTask -TaskName $TaskBridge"),
     );
   });
+});
+
+describe.runIf(onWindows)("supervisor ownership is atomic", () => {
+  it("two simultaneous starts with no pid file let exactly one loop and one node proceed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-cli-tasks-race-"));
+    const children: Array<ReturnType<typeof spawn>> = [];
+    try {
+      mkdirSync(join(dir, "root", "dist", "cli"), { recursive: true });
+      writeFileSync(
+        join(dir, "root", "dist", "cli", "index.js"),
+        "setInterval(() => {}, 1000);\n",
+        "utf8",
+      );
+      const config = join(dir, "mcp-cli.json");
+      writeFileSync(config, JSON.stringify({ mcpServers: {} }), "utf8");
+      const state = join(dir, "state");
+      mkdirSync(state, { recursive: true });
+      const common = [
+        "-Action",
+        "run",
+        "-Service",
+        "daemon",
+        "-Root",
+        join(dir, "root"),
+        "-Config",
+        config,
+        "-StateDir",
+        state,
+        "-LogDir",
+        join(dir, "logs"),
+        "-DaemonPort",
+        "1",
+        "-BridgePort",
+        "1",
+        "-TaskPrefix",
+        "mcp-cli-test-race",
+        "-Node",
+        process.execPath,
+      ];
+      const exits: Array<number | null> = [];
+      for (let i = 0; i < 2; i++) {
+        const child = spawn(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script,
+            ...common,
+          ],
+          { stdio: "ignore", windowsHide: true },
+        );
+        child.on("exit", (code) => exits.push(code));
+        children.push(child);
+      }
+      // Give both time to reach the lock, start node, and log.
+      const deadline = Date.now() + 40_000;
+      while (exits.length < 1 && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 3000));
+      expect(exits).toEqual([3]);
+      const alive = children.filter((c) => c.exitCode === null);
+      expect(alive).toHaveLength(1);
+      const owner = readFileSync(join(state, "daemon-supervisor.pid"), "utf8").trim();
+      expect(owner).toBe(String(alive[0].pid));
+      const list = spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'mcp-cli-tasks-race' -and $_.CommandLine -match 'index\\.js' } | Measure-Object).Count`,
+        ],
+        { encoding: "utf8", timeout: 60_000 },
+      );
+      expect(list.stdout.trim()).toBe("1");
+      const log = readFileSync(join(state, "daemon-supervisor.log"), "utf8");
+      expect(log).toMatch(/holds .*daemon-supervisor\.pid for daemon; not starting a second loop/);
+      expect((log.match(/supervisor pid \d+ for daemon/g) ?? []).length).toBe(1);
+    } finally {
+      for (const c of children)
+        if (c.pid && c.exitCode === null)
+          spawnSync("taskkill", ["/PID", String(c.pid), "/T", "/F"], { stdio: "ignore" });
+      await new Promise((r) => setTimeout(r, 1500));
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+    }
+  }, 120_000);
 });
