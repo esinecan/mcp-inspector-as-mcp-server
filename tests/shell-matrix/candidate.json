@@ -1,0 +1,428 @@
+{
+  "label": "candidate",
+  "when": "2026-09-21T23:58:06.068Z",
+  "node": "v24.11.1",
+  "cli": "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js",
+  "shells": {
+    "cmd": {
+      "name": "cmd.exe",
+      "cases": {
+        "F2": {
+          "title": "one error report under --json",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--args-file",
+            "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\missing.json"
+          ],
+          "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" --json call frozen.read --args-file \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\missing.json\"",
+          "exit": 2,
+          "stdout_bytes": 346,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"ok\": false,\n  \"error\": {\n    \"class\": \"usage\",\n    \"message\": \"Cannot read arguments from C:\\\\Users\\\\yepis\\\\dev\\\\mcp-inspector-as-mcp-server\\\\tests\\\\shell-matrix\\\\.tmp\\\\missing.json: ENOENT: no such file or directory, open 'C:\\\\Users\\\\yepis\\\\dev\\\\mcp-inspector-as-mcp-server\\\\tests\\\\shell-matrix\\\\.tmp\\\\missing.json'\"\n  },\n  \"exitCode\": 2\n}\n",
+          "stderr_head": "",
+          "pass": true,
+          "note": "envelope only"
+        },
+        "F3": {
+          "title": "one ref and one next",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--args-file",
+            "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json"
+          ],
+          "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" --json call frozen.read --args-file \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json\"",
+          "exit": 0,
+          "stdout_bytes": 1209,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
+          "stderr_head": "",
+          "pass": false,
+          "note": "oneRef=false nextHasWithin=false"
+        },
+        "F1": {
+          "title": "quote-free --arg",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--arg",
+            "name=pi-stack"
+          ],
+          "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" --json call frozen.read --arg name=pi-stack",
+          "exit": 2,
+          "stdout_bytes": 0,
+          "stderr_bytes": 29,
+          "stdout_head": "",
+          "stderr_head": "mcp-cli: Unknown flag: --arg\n",
+          "pass": false,
+          "note": "mcp-cli: Unknown flag: --arg\n"
+        },
+        "F4": {
+          "title": "excerpt boundaries and match total",
+          "argv": [
+            "spill",
+            "query",
+            "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+            "--within",
+            "/record/body",
+            "--query",
+            "pi 0.85.1"
+          ],
+          "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within /record/body --query \"pi 0.85.1\"",
+          "exit": 0,
+          "stdout_bytes": 3521,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+          "stderr_head": "",
+          "pass": false,
+          "note": "total=undefined items=3 midWordCuts=1"
+        },
+        "F5": {
+          "title": "pointer aliases",
+          "forms": [
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "/record/body"
+              ],
+              "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within /record/body",
+              "exit": 0,
+              "stdout_bytes": 1788,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+              "stderr_head": "",
+              "form": "/record/body",
+              "pass": true,
+              "note": "outline"
+            },
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "record/body"
+              ],
+              "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within record/body",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            },
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "#/record/body"
+              ],
+              "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within #/record/body",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "#/record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            }
+          ],
+          "pass": false,
+          "note": "/record/body:ok | record/body:mcp-cli: Invalid JSON Pointer\n | #/record/body:mcp-cli: Invalid JSON Pointer\n"
+        }
+      }
+    },
+    "powershell": {
+      "name": "Windows PowerShell 5.1",
+      "cases": {
+        "F2": {
+          "title": "one error report under --json",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--args-file",
+            "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\missing.json"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\missing.json'",
+          "exit": 2,
+          "stdout_bytes": 346,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"ok\": false,\n  \"error\": {\n    \"class\": \"usage\",\n    \"message\": \"Cannot read arguments from C:\\\\Users\\\\yepis\\\\dev\\\\mcp-inspector-as-mcp-server\\\\tests\\\\shell-matrix\\\\.tmp\\\\missing.json: ENOENT: no such file or directory, open 'C:\\\\Users\\\\yepis\\\\dev\\\\mcp-inspector-as-mcp-server\\\\tests\\\\shell-matrix\\\\.tmp\\\\missing.json'\"\n  },\n  \"exitCode\": 2\n}\n",
+          "stderr_head": "",
+          "pass": true,
+          "note": "envelope only"
+        },
+        "F3": {
+          "title": "one ref and one next",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--args-file",
+            "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json'",
+          "exit": 0,
+          "stdout_bytes": 1209,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
+          "stderr_head": "",
+          "pass": false,
+          "note": "oneRef=false nextHasWithin=false"
+        },
+        "F1": {
+          "title": "quote-free --arg",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--arg",
+            "name=pi-stack"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--arg' 'name=pi-stack'",
+          "exit": 2,
+          "stdout_bytes": 0,
+          "stderr_bytes": 29,
+          "stdout_head": "",
+          "stderr_head": "mcp-cli: Unknown flag: --arg\n",
+          "pass": false,
+          "note": "mcp-cli: Unknown flag: --arg\n"
+        },
+        "F4": {
+          "title": "excerpt boundaries and match total",
+          "argv": [
+            "spill",
+            "query",
+            "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+            "--within",
+            "/record/body",
+            "--query",
+            "pi 0.85.1"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '/record/body' '--query' 'pi 0.85.1'",
+          "exit": 0,
+          "stdout_bytes": 3521,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+          "stderr_head": "",
+          "pass": false,
+          "note": "total=undefined items=3 midWordCuts=1"
+        },
+        "F5": {
+          "title": "pointer aliases",
+          "forms": [
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "/record/body"
+              ],
+              "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '/record/body'",
+              "exit": 0,
+              "stdout_bytes": 1788,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+              "stderr_head": "",
+              "form": "/record/body",
+              "pass": true,
+              "note": "outline"
+            },
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "record/body"
+              ],
+              "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' 'record/body'",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            },
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "#/record/body"
+              ],
+              "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '#/record/body'",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "#/record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            }
+          ],
+          "pass": false,
+          "note": "/record/body:ok | record/body:mcp-cli: Invalid JSON Pointer\n | #/record/body:mcp-cli: Invalid JSON Pointer\n"
+        }
+      }
+    },
+    "bash": {
+      "name": "Git Bash",
+      "cases": {
+        "F2": {
+          "title": "one error report under --json",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--args-file",
+            "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\missing.json"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\missing.json'",
+          "exit": 2,
+          "stdout_bytes": 346,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"ok\": false,\n  \"error\": {\n    \"class\": \"usage\",\n    \"message\": \"Cannot read arguments from C:\\\\Users\\\\yepis\\\\dev\\\\mcp-inspector-as-mcp-server\\\\tests\\\\shell-matrix\\\\.tmp\\\\missing.json: ENOENT: no such file or directory, open 'C:\\\\Users\\\\yepis\\\\dev\\\\mcp-inspector-as-mcp-server\\\\tests\\\\shell-matrix\\\\.tmp\\\\missing.json'\"\n  },\n  \"exitCode\": 2\n}\n",
+          "stderr_head": "",
+          "pass": true,
+          "note": "envelope only"
+        },
+        "F3": {
+          "title": "one ref and one next",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--args-file",
+            "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json'",
+          "exit": 0,
+          "stdout_bytes": 1209,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
+          "stderr_head": "",
+          "pass": false,
+          "note": "oneRef=false nextHasWithin=false"
+        },
+        "F1": {
+          "title": "quote-free --arg",
+          "argv": [
+            "--json",
+            "call",
+            "frozen.read",
+            "--arg",
+            "name=pi-stack"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--arg' 'name=pi-stack'",
+          "exit": 2,
+          "stdout_bytes": 0,
+          "stderr_bytes": 29,
+          "stdout_head": "",
+          "stderr_head": "mcp-cli: Unknown flag: --arg\n",
+          "pass": false,
+          "note": "mcp-cli: Unknown flag: --arg\n"
+        },
+        "F4": {
+          "title": "excerpt boundaries and match total",
+          "argv": [
+            "spill",
+            "query",
+            "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+            "--within",
+            "record/body",
+            "--query",
+            "pi 0.85.1"
+          ],
+          "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' 'record/body' '--query' 'pi 0.85.1'",
+          "exit": 2,
+          "stdout_bytes": 0,
+          "stderr_bytes": 30,
+          "stdout_head": "",
+          "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+          "pass": false,
+          "note": "mcp-cli: Invalid JSON Pointer\n"
+        },
+        "F5": {
+          "title": "pointer aliases",
+          "forms": [
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "/record/body"
+              ],
+              "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '/record/body'",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "/record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            },
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "record/body"
+              ],
+              "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' 'record/body'",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            },
+            {
+              "argv": [
+                "spill",
+                "query",
+                "5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324",
+                "--within",
+                "#/record/body"
+              ],
+              "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '#/record/body'",
+              "exit": 2,
+              "stdout_bytes": 0,
+              "stderr_bytes": 30,
+              "stdout_head": "",
+              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "form": "#/record/body",
+              "pass": false,
+              "note": "mcp-cli: Invalid JSON Pointer\n"
+            }
+          ],
+          "pass": false,
+          "note": "/record/body:mcp-cli: Invalid JSON Pointer\n | record/body:mcp-cli: Invalid JSON Pointer\n | #/record/body:mcp-cli: Invalid JSON Pointer\n"
+        }
+      }
+    }
+  }
+}

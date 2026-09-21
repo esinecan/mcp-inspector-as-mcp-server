@@ -221,6 +221,10 @@ function fail(out: Output, err: Error, json: boolean, v2 = false): number {
       v2 ? { ...(envelope as object), schemaVersion: 2, result: { kind: "error" } } : envelope,
       () => "",
     );
+    // The envelope carries the message and the class. A second copy on stderr
+    // reaches a caller whose tool merges the two streams as the same text
+    // twice, and a pipeline that reads stdout has already been answered.
+    return code;
   }
   out.note(err.message);
   if (err instanceof SupervisedError) {

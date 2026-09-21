@@ -109,7 +109,8 @@ describe("the JSON failure envelope", () => {
       lane: "ephemeral",
     });
     expect(envelope.error.trace).toMatch(/^t_/);
-    expect(r.err).toContain("[transient] dead info attempts=1");
+    // The report is in the envelope; nothing repeats it on stderr under --json.
+    expect(r.err).toBe("");
     expect(existsSync(join(stateDir, "events.jsonl"))).toBe(true);
     const lines = readFileSync(join(stateDir, "events.jsonl"), "utf8").trim().split("\n");
     expect(lines.map((l) => JSON.parse(l).event)).toContain("failed");

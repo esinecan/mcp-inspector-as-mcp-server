@@ -5,3 +5,4 @@ dist/
 *-textified/
 concatenated.txt
 .serena/
+tests/shell-matrix/.tmp/

@@ -82,6 +82,28 @@ describe("usage errors", () => {
     expect(r.code).toBe(2);
   });
 
+  it("reports a --json failure once, as the envelope on stdout and nothing on stderr", async () => {
+    const r = await run(
+      "--json",
+      "call",
+      "forum.read",
+      "--args-file",
+      join(dir, "absent-args.json"),
+    );
+    expect(r.code).toBe(2);
+    expect(r.err).toBe("");
+    const envelope = JSON.parse(r.out);
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.message).toContain("Cannot read arguments from");
+  });
+
+  it("keeps the failure on stderr in text mode", async () => {
+    const r = await run("call", "forum.read", "--args-file", join(dir, "absent-args.json"));
+    expect(r.code).toBe(2);
+    expect(r.out).toBe("");
+    expect(r.err).toContain("mcp-cli: Cannot read arguments from");
+  });
+
   it("gives an unknown server exit code 2 and lists the known ones", async () => {
     const r = await run("tools", "nosuch");
     expect(r.code).toBe(2);
