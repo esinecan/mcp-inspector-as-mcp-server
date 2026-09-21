@@ -13,6 +13,7 @@
     "dist/",
     "bin/",
     "scripts/",
+    "docs/result-query-and-process.md",
     "LICENSE",
     "README.md"
   ],

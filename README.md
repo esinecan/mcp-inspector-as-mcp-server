@@ -973,3 +973,9 @@ npm run typecheck    # type-check without emitting
 ## License
 
 MIT
+## Targeted retrieval and checked execution
+
+Read [the query and process guide](docs/result-query-and-process.md) for exact tool
+schemas, bounded queries over retained responses, version 2 output, and native
+process execution with raw stdout and stderr capture. Existing envelope and shell
+requests remain supported.
