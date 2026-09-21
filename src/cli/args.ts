@@ -36,6 +36,15 @@ export interface ParsedArgs {
   format?: "raw" | "compact" | "table" | "sample";
   /** `--intent`, a query that narrows a stored result to what it asked for. */
   intent?: string;
+  /**
+   * `--args-file`, the path of a JSON file holding a call's arguments. The
+   * same thing `@path` names, without the sigil: PowerShell reads a leading
+   * `@` as the array operator, so `@("$path")` silently drops it and the path
+   * arrives where JSON was expected.
+   */
+  argsFile?: string;
+  /** `--schema`, with "tools", also print each tool's input schema. */
+  schema: boolean;
   /** `--older-than`, the age in days beyond which `spill prune` deletes. */
   olderThan?: number;
   /** `--limit`, how many rows `search` returns. */
@@ -69,6 +78,7 @@ const VALUE_FLAGS = new Set([
   "--stdin",
   "--format",
   "--intent",
+  "--args-file",
   "--older-than",
   "--limit",
   "--provider",
@@ -86,6 +96,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     help: false,
     version: false,
     noBrowser: false,
+    schema: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -116,6 +127,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
         continue;
       case "--all":
         parsed.all = true;
+        continue;
+      case "--schema":
+        parsed.schema = true;
         continue;
       case "--force":
         parsed.force = true;
@@ -196,6 +210,10 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
     }
     case "--intent":
       parsed.intent = value;
+      return;
+    case "--args-file":
+      if (value.trim().length === 0) throw new UsageError("--args-file needs a file path");
+      parsed.argsFile = value;
       return;
     case "--older-than": {
       const days = Number(value);

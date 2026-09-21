@@ -125,13 +125,49 @@ describe("the JSON failure envelope", () => {
 });
 
 describe("call through the executor", () => {
-  it("prints a successful result exactly as before, under --json and as text", async () => {
+  it("prints a successful result as text, and as a flat --json envelope", async () => {
     const text = await run("call", "scripted.echo", '{"text":"hi there"}');
     expect(text.code).toBe(0);
     expect(text.out).toBe("hi there\n");
     const json = await run("call", "scripted.echo", '{"text":"hi there"}', "--json");
     expect(json.code).toBe(0);
-    expect(JSON.parse(json.out)).toEqual({ content: [{ type: "text", text: "hi there" }] });
+    // The envelope mirrors the failure envelope, so one `.ok` test serves both.
+    // "hi there" is not a JSON document, so `result` is the text rendering.
+    expect(JSON.parse(json.out)).toEqual({
+      ok: true,
+      isError: false,
+      lane: "ephemeral",
+      result: "hi there",
+    });
+  }, 30_000);
+
+  it("unwraps a JSON payload under --json, so one jq hop reaches a field", async () => {
+    const payload = JSON.stringify({ record: { updated: "2026-09-06", name: "x" } });
+    const json = await run("call", "scripted.echo", JSON.stringify({ text: payload }), "--json");
+    expect(json.code).toBe(0);
+    const envelope = JSON.parse(json.out) as { ok: boolean; result: Record<string, unknown> };
+    expect(envelope.ok).toBe(true);
+    // The payload arrives parsed, not as an escaped string inside a string.
+    expect(envelope.result).toEqual({ record: { updated: "2026-09-06", name: "x" } });
+  }, 30_000);
+
+  it("keeps the shape and withholds only the oversize leaf, above the threshold", async () => {
+    const big = "y".repeat(30_000);
+    const payload = JSON.stringify({ record: { updated: "2026-09-06", body: big } });
+    const json = await run("call", "scripted.echo", JSON.stringify({ text: payload }), "--json");
+    expect(json.code).toBe(0);
+    const envelope = JSON.parse(json.out) as {
+      result: { record: { updated: string; body: string } };
+      spill: string;
+      withheldBytes: number;
+    };
+    // The addressable field survives the pruning; the 30 kB leaf does not.
+    expect(envelope.result.record.updated).toBe("2026-09-06");
+    expect(envelope.result.record.body).toMatch(/^\[30,000 bytes withheld\. mcp-cli spill get /);
+    expect(envelope.withheldBytes).toBe(30_000);
+    expect(envelope.spill).toMatch(/^[0-9a-f]{64}$/);
+    // The whole envelope is far smaller than the payload it stands for.
+    expect(json.out.length).toBeLessThan(1000);
   }, 30_000);
 
   it("prints an isError result unchanged, exits 1, and remarks on the class in text mode", async () => {

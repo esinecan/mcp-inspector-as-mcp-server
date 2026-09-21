@@ -137,3 +137,27 @@ describe("the bridge flags", () => {
     expect(() => parseArgs(["bridge", "exec", "cmd", "--timeout", "0"])).toThrow(UsageError);
   });
 });
+
+describe("--args-file and --schema", () => {
+  it("reads --args-file as a value flag", () => {
+    expect(parseArgs(["call", "s.t", "--args-file", "/tmp/a.json"]).argsFile).toBe("/tmp/a.json");
+  });
+
+  it("accepts the --args-file=path spelling", () => {
+    expect(parseArgs(["call", "s.t", "--args-file=/tmp/a.json"]).argsFile).toBe("/tmp/a.json");
+  });
+
+  it("rejects an empty --args-file", () => {
+    expect(() => parseArgs(["call", "s.t", "--args-file", "  "])).toThrow(/needs a file path/);
+  });
+
+  it("leaves the positional argument alone", () => {
+    const args = parseArgs(["call", "s.t", "--args-file", "/tmp/a.json"]);
+    expect(args.positionals).toEqual(["s.t"]);
+  });
+
+  it("reads --schema as a boolean, defaulting to false", () => {
+    expect(parseArgs(["tools", "memory-store"]).schema).toBe(false);
+    expect(parseArgs(["tools", "memory-store", "--schema"]).schema).toBe(true);
+  });
+});

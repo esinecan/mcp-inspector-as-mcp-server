@@ -84,6 +84,13 @@ export interface ExecutorDeps {
   primary: Lane;
   /** Where an operation goes when the primary lane finds no daemon. */
   fallback?: Lane;
+  /**
+   * Called once, the first time the primary lane is abandoned, with the reason
+   * it gave. A daemon that refuses a caller's config answers here rather than
+   * nowhere: the call still succeeds on the fallback, so without this the only
+   * evidence that the warm lane was not used is in the event log.
+   */
+  onFallback?: (reason: string) => void;
   store?: StateStore;
   events?: EventSink;
   env?: NodeJS.ProcessEnv;
@@ -492,6 +499,9 @@ export class McpExecutor {
       return { value, lane };
     } catch (err) {
       if (!(err instanceof DaemonUnavailable)) throw err;
+      // First abandonment only: after this every operation skips the primary
+      // lane, and repeating the reason on each one says nothing new.
+      if (!this.daemonDown) this.deps.onFallback?.(err.message);
       this.daemonDown = true;
       if (rule.daemonRequired) {
         throw new DaemonRequired(

@@ -46,6 +46,12 @@ export interface ToolDescriptor {
   name: string;
   description?: string;
   annotations?: ToolAnnotations;
+  /**
+   * The JSON Schema of the tool's arguments, as the server declared it. Kept
+   * because a caller that mistypes an address is told what the right call
+   * looks like, and the required properties are where that example comes from.
+   */
+  inputSchema?: Record<string, unknown>;
 }
 
 export interface PromptDescriptor {
@@ -109,9 +115,17 @@ export interface OperationClient {
 
 /** The tool descriptor the CLI keeps from a `tools/list` entry. */
 export function describeTool(tool: unknown): ToolDescriptor {
-  const t = tool as { name: string; description?: string; annotations?: ToolAnnotations };
+  const t = tool as {
+    name: string;
+    description?: string;
+    annotations?: ToolAnnotations;
+    inputSchema?: unknown;
+  };
   const out: ToolDescriptor = { name: t.name };
   if (t.description !== undefined) out.description = t.description;
+  if (t.inputSchema !== null && typeof t.inputSchema === "object") {
+    out.inputSchema = t.inputSchema as Record<string, unknown>;
+  }
   if (t.annotations && typeof t.annotations === "object") {
     const a: ToolAnnotations = {};
     for (const key of [

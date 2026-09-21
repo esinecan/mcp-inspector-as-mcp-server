@@ -59,3 +59,64 @@ describe("parseArguments", () => {
     expect(() => parseArguments("{oops")).toThrow(/not valid JSON/);
   });
 });
+
+describe("--args-file", () => {
+  const read = (path: string): string => {
+    if (path === "/args.json") return '{"name":"pi-stack"}';
+    throw new Error("ENOENT: no such file or directory");
+  };
+
+  it("reads the arguments from the named file, with no sigil", () => {
+    expect(readArgumentText(undefined, () => "", read, "/args.json")).toBe('{"name":"pi-stack"}');
+  });
+
+  it("names the file when it cannot be read", () => {
+    expect(() => readArgumentText(undefined, () => "", read, "/missing.json")).toThrow(
+      /Cannot read arguments from \/missing\.json/,
+    );
+  });
+
+  it("refuses the flag and a positional argument together", () => {
+    // Two ways to say the same thing is a mistake, not a precedence question.
+    expect(() => readArgumentText("{}", () => "", read, "/args.json")).toThrow(
+      /both give the arguments\. Pass one\./,
+    );
+  });
+
+  it("leaves the three older forms alone", () => {
+    expect(readArgumentText('{"a":1}', () => "", read)).toBe('{"a":1}');
+    expect(readArgumentText("-", () => "from stdin", read)).toBe("from stdin");
+    expect(readArgumentText("@/args.json", () => "", read)).toBe('{"name":"pi-stack"}');
+  });
+});
+
+describe("a dropped @ sigil", () => {
+  const exists = (path: string): boolean => path === "C:\tmp\args.json";
+
+  it("says the text is a file, because that is what a dropped sigil looks like", () => {
+    // PowerShell's @("$p") evaluates to the bare path, so the path arrives
+    // where JSON was expected and "Unexpected token 'C'" explains nothing.
+    expect(() => parseArguments("C:\tmp\args.json", "C:\tmp\args.json", exists)).toThrow(
+      /is a file that exists\. To read the arguments from it: --args-file C:\tmp\args\.json/,
+    );
+  });
+
+  it("keeps the plain JSON error for text that names no file", () => {
+    expect(() => parseArguments("{oops", "{oops", exists)).toThrow(/Arguments are not valid JSON:/);
+  });
+
+  it("keeps the plain JSON error when the caller passed no spec", () => {
+    expect(() => parseArguments("C:\tmp\args.json")).toThrow(/Arguments are not valid JSON:/);
+  });
+
+  it("never asks the file system about a large payload", () => {
+    let asked = 0;
+    const counted = (p: string): boolean => {
+      asked++;
+      return exists(p);
+    };
+    const big = `{${"x".repeat(5000)}`;
+    expect(() => parseArguments(big, big, counted)).toThrow(/not valid JSON:/);
+    expect(asked).toBe(0);
+  });
+});

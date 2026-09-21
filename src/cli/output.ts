@@ -31,15 +31,28 @@ export class Output {
    * Write the result of a command. In JSON mode the value is serialised; in
    * text mode the callback renders it, and it is not called at all otherwise.
    *
-   * The JSON branch is a contract, not an implementation detail: it feeds jq
-   * pipelines and the daemon's POST /op, so it must keep emitting exactly
-   * `JSON.stringify(value, null, 2)` plus one newline. No re-encoding,
-   * pruning, eliding or re-serialising may ever reach this branch.
+   * The JSON branch prints exactly `JSON.stringify(value, null, 2)` plus one
+   * newline, so a listing, a status or a bridge exec stays byte-faithful to the
+   * value its command built. A command whose JSON value differs from its text
+   * value builds both itself and calls `emitLazy`; this method never reshapes
+   * what it is handed.
    */
   emit(value: unknown, text: () => string): void {
+    this.emitLazy(() => value, text);
+  }
+
+  /**
+   * The same, for a command whose JSON value is not its text value.
+   *
+   * `call` is the one such command. A person reads a head and a spill handle;
+   * a program reads a document it can address with one `jq` hop, and the head
+   * of a cut JSON document does not parse. Each branch is therefore built only
+   * when it is the branch being printed, so neither reader pays for the
+   * other's rendering.
+   */
+  emitLazy(value: () => unknown, text: () => string): void {
     if (this.json) {
-      // UNTOUCHED BY DESIGN: --json output is byte-faithful to the result.
-      this.out(`${JSON.stringify(value, null, 2)}\n`);
+      this.out(`${JSON.stringify(value(), null, 2)}\n`);
       return;
     }
     const rendered = text();

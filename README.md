@@ -484,6 +484,8 @@ Global flags, valid on every command:
 | `--json` | one JSON object on stdout instead of text; a failure is the error envelope |
 | `--timeout <ms>` | total budget of one operation, queue wait included |
 | `--all` | with `tools`, also show blocked tools, marked |
+| `--schema` | with `tools`, also show each tool's argument schema |
+| `--args-file <path>` | read a call's JSON arguments from a file, without the `@` sigil |
 | `--limit <n>`, `--provider <name>` | with `search`, how many rows, and one server instead of the route |
 | `--port`, `--bind` | with `bridge serve`, the listening socket |
 | `--port` | with `daemon`, its port. Also `MCP_CLI_DAEMON_PORT` and `daemon.port`, default 8791 |
@@ -552,23 +554,83 @@ mcp-cli call forum.po '{}'
 ```
 
 Server names resolve the same way, minus the substring round. `FORUM` finds
-`forum`. An unknown name lists the configured ones and exits 2.
+`forum`.
+
+When nothing resolves, the error answers with as much as it could determine.
+`call` has already listed the server's tools by this point, and each descriptor
+carries its schema, so naming the likely tool costs nothing beyond comparing
+the strings.
+
+One tool close enough to be a typo gets the call that would have worked:
+
+```bash
+mcp-cli call memory-store.memory_reed '{"name":"x"}'
+# mcp-cli: No tool matches "memory-store.memory_reed". Did you mean memory-store.memory_read?
+#   mcp-cli call memory-store.memory_read '{"name":"<string>"}'
+```
+
+No close tool on a known server gets that server's whole list, rather than an
+instruction to run a second command for it:
+
+```bash
+mcp-cli call memory-store.zzz '{}'
+# mcp-cli: No tool matches "memory-store.zzz". memory-store has:
+#   memory-store.memory_search
+#   memory-store.memory_read
+#   ...
+```
+
+An address naming no configured server, or carrying no dot at all, gets every
+server with the tools it last showed, ten per line:
+
+```bash
+mcp-cli call memory_read '{"name":"x"}'
+# mcp-cli: "memory_read" is not a server.tool address. Configured servers:
+#   forum (post, poll, read, share_file, history)
+#   memory-store (memory_search, memory_read, memory_save, ...)
+#   scalable (not listed yet)
+```
+
+That listing is read from `<stateDir>/tools.json`, which every successful
+`tools/list` writes. Nothing is fetched to build it: a fan-out over a whole
+fleet takes tens of seconds and would dial servers that are only failing. A
+server no listing has reached yet is marked rather than waited for, so the
+record is a display aid and never a gate. Entries are keyed against the config
+file's mtime, so a changed config drops them.
+
+An unknown server name exits 2.
 
 ### Arguments
 
-Arguments are a JSON object, in one of three forms. There is no key=value form,
+Arguments are a JSON object, in one of four forms. There is no key=value form,
 because coercing untyped pairs into a JSON Schema guesses at what the caller
 meant. Omitting the argument means `{}`.
 
 ```bash
-mcp-cli call forum.poll '{}'                         # inline
-echo '{"limit":1}' | mcp-cli call forum.history -    # "-" reads stdin
-mcp-cli call forum.history @args.json                # "@path" reads a file
+mcp-cli call forum.poll '{}'                          # inline
+echo '{"limit":1}' | mcp-cli call forum.history -     # "-" reads stdin
+mcp-cli call forum.history @args.json                 # "@path" reads a file
+mcp-cli call forum.history --args-file args.json      # the same file, no sigil
 ```
 
 Git Bash is the documented shell on Windows. PowerShell rewrites inline JSON
 before the process sees it, and single quotes do not protect it. In PowerShell,
-use the `-` form or the `@path` form instead.
+use the `-` form or `--args-file`.
+
+`--args-file` exists because `@` is not shell-neutral. PowerShell reads a
+leading `@` as the array operator, so `@("$path")` evaluates to the bare path
+and the file name arrives where JSON was expected. `"@$path"` and a bare
+`@$path` both survive, but the rule is easy to get wrong and the failure used
+to read `Unexpected token 'C'`. It now names the mistake:
+
+```powershell
+mcp-cli call memory-store.memory_read @("$p")
+# mcp-cli: Arguments are not valid JSON, but "C:	mprgs.json" is a file that
+# exists. To read the arguments from it: --args-file C:	mprgs.json
+```
+
+`--args-file` together with a positional argument is a usage error, because two
+ways to say the same thing is a mistake rather than a precedence question.
 
 ### format
 
@@ -603,6 +665,59 @@ handle; each handle names the digest of exactly what its own spill entry holds.
 sampled head, so a query that names only a withheld row still finds it. The
 answer carries no handle line — the flag replaces the command it would print —
 so the digest of the sampled table is noted on stderr instead.
+
+### The --json envelope
+
+`--json` prints one envelope. Success and failure share a shape, so a caller
+tests `.ok` once and then reads `.result` or `.error`:
+
+```json
+{ "ok": true, "isError": false, "lane": "daemon", "result": { "record": { "updated": "2026-09-06" } } }
+{ "ok": false, "error": { "class": "failure", "message": "..." }, "exitCode": 1 }
+```
+
+`lane` is `daemon` or `ephemeral`: which connection served the call. A run under
+a narrowed `--config` needs that, because the warm daemon runs its own config
+and refuses a caller whose config differs. The call still succeeds on a fresh
+connection, and the reason is now stated:
+
+```
+mcp-cli: the warm daemon did not serve this call: this daemon serves
+C:\Users\yepis\.agents\mcp-cli.json, not C:\tmp\scoped.json
+```
+
+A text result whose whole text is one JSON object or array arrives parsed, so
+one `jq` hop reaches a field. Anything else — a log, a diff, a bare string —
+arrives as the text that text mode would have printed.
+
+Oversize results are pruned by shape, not by text. Text mode cuts a head and
+prints a spill handle, which is right for a person and useless to a program:
+the head of a cut JSON document does not parse, so every field below the cut
+becomes unreachable. JSON mode instead keeps every key and replaces only a
+string leaf larger than `pruning.headBytes`:
+
+```console
+$ mcp-cli --json call memory-store.memory_read '{"name":"pi-stack"}' | jq -r .result.record.updated
+2026-09-06 claude
+```
+
+```json
+{ "ok": true, "isError": false, "lane": "daemon",
+  "result": { "record": { "updated": "2026-09-06 claude",
+                          "body": "[18,432 bytes withheld. mcp-cli spill get 7f3a...]" } },
+  "spill": "7f3a...", "withheldBytes": 18432 }
+```
+
+`spill` and `withheldBytes` appear only when something was withheld, and
+`mcp-cli spill get <digest>` returns the whole result. On that record the
+envelope is 822 bytes where the whole payload is 19,390.
+
+`--intent` under `--json` answers with the narrowed text, the same answer text
+mode gives, because an intent asked for an answer rather than a document.
+
+Every other command's `--json` output is the value that command built, printed
+byte for byte: `servers`, `tools`, `info`, `daemon status` and `bridge exec`
+are unchanged.
 
 ### bridge
 
@@ -820,6 +935,11 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+- `--json` prints one envelope for `call`, `{ok, isError, lane, result}` on success to match the failure envelope it already printed. A JSON payload arrives parsed instead of escaped inside a string, so one `jq` hop reaches a field, and an oversize result is pruned by shape rather than by text: every key survives and only a string leaf over `pruning.headBytes` is replaced, with `spill` and `withheldBytes` beside it. On a 19,390-byte memory record the envelope is 822 bytes. Every other command's `--json` output is unchanged
+- An address that resolves to nothing answers with what it could determine: the call that would have worked when one tool is within two edits, that server's whole tool list when only the server is known, and every server with the tools it last showed when neither is. The widest of the three is read from `<stateDir>/tools.json`, which every successful listing writes, so it costs 0.3 s instead of a 25 s fan-out and never dials a failing server
+- Added `--args-file <path>`: a call's JSON arguments from a file with no `@` sigil, because PowerShell reads a leading `@` as the array operator. Argument text that does not parse but does name an existing file now says so instead of reporting `Unexpected token 'C'`
+- Added `mcp-cli tools <server> --schema`: each tool's argument schema, which is also where the corrected call in an address error comes from
+- A call the warm daemon did not serve says why on stderr, so a run under a narrowed `--config` cannot silently look like a warm one
 - The Windows tasks supervise their own process: a loop inside each service task restarts node within seconds of an exit, the watchdog probes `/health/ready` on both services and never starts a second loop, `status` prints a recovery block with the supervisor state, the watchdog tick age and the scheduler probe as observed, and `-Action probe-restart` measures the scheduler's restart-on-failure instead of assuming it
 - Added `mcp-cli auth login|status|logout|refresh`: OAuth for a URL server per the MCP authorization specification (revision 2025-11-25) through the SDK's own flow. The credential is DPAPI-protected on Windows and owner-only elsewhere, the sidecar holds nothing secret, a login closes the server's `auth_required` circuit and reconnects a warm daemon, and no lane ever opens a browser: a needed login is reported as `oauth_login_required`. Scope follows the specification; `auth.scope` is an explicit opt-in
 - Put one executor between every command and every server: operations instead of callbacks, one queue per server with the wait counted against the deadline, eight failure classes, one retry for reads and none for anything that may write, server and request circuits persisted across processes, a JSONL event log with trace ids, a `--json` failure envelope, and exit code 4 for a refusal before dispatch. See [docs/mcp-cli-supervision.md](docs/mcp-cli-supervision.md)

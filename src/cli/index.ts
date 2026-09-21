@@ -18,7 +18,7 @@ import { homedir } from "os";
 import { fileURLToPath } from "url";
 
 import { parseArgs, type ParsedArgs } from "./args.js";
-import { BlockedError, CliError, UsageError } from "./errors.js";
+import { BlockedError, CliError, UnknownServerError, UsageError } from "./errors.js";
 import {
   configPath,
   parseConfig,
@@ -32,6 +32,9 @@ import { loadFleet, type Fleet } from "./fleet.js";
 import { CLIENT_VERSION, ServerError, type ToolDescriptor } from "./server-session.js";
 import { resolveAddress, splitAddress } from "./match.js";
 import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
+import { buildEnvelope, textOf } from "./envelope.js";
+import { callExample, nearest } from "./example.js";
+import { fileToolCache, serversWithTools, type ToolCache } from "./tool-cache.js";
 import { convertServers, mergeIntoConfig, readClaudeServers } from "./import.js";
 import {
   Output,
@@ -85,16 +88,20 @@ Usage:
   mcp-cli spill <get|path|prune>          read back a result that was spilled
 
 Arguments for call and prompt are JSON, given as inline text, as "-" to read
-stdin, or as "@path" to read a file.
+stdin, as "@path" to read a file, or with --args-file <path> for the same file
+without the sigil. PowerShell reads a leading "@" as the array operator, so
+--args-file is the form that needs no quoting rule.
 
 Global flags:
   --config <path>   config file (default ${DEFAULT_CONFIG_PATH}, env MCP_CLI_CONFIG)
   --profile <name>  blocklist profile (env MCP_CLI_PROFILE, default "default")
-  --json            one JSON object on stdout instead of text; a failure is an envelope
+  --json            one JSON envelope on stdout: {ok, result} or {ok, error}
   --timeout <ms>    total budget of one operation, queue wait included
   --all             with "tools", also show blocked tools, marked
+  --schema          with "tools", also show each tool's argument schema
   --format <raw|compact|table|sample>  how a text result is re-encoded, with "call"
   --intent <text>   narrow a stored result to what it asked for, with "call"
+  --args-file <path>  read a call's JSON arguments from a file, without the @ sigil
   --limit <n>       with "search", how many rows
   --provider <name> with "search", one server instead of the route
   --port, --bind    with "bridge serve", the listening socket
@@ -216,6 +223,12 @@ export interface Context {
   executor: McpExecutor;
   out: Output;
   render: RenderOptions;
+  /**
+   * What each server last showed, so an unresolvable address can be answered
+   * with the fleet's tools instead of a fan-out. Written by every successful
+   * listing; never consulted before a call is allowed.
+   */
+  toolCache: ToolCache;
   /** The `--timeout` budget for every operation of this run, if given. */
   deadlineMs?: number;
 }
@@ -256,6 +269,7 @@ export function context(args: ParsedArgs): Context {
     store: fileStateStore(join(settings.stateDir, "circuits.json")),
     events: settings.eventLog !== undefined ? fileSink(settings.eventLog) : NO_EVENTS,
     credentialStamp: (server) => authStore.stamp(server),
+    onFallback: (reason) => out.note(`the warm daemon did not serve this call: ${reason}`),
   });
   openExecutors.push(executor);
 
@@ -270,7 +284,8 @@ export function context(args: ParsedArgs): Context {
     intentBudget: pruning.intentBudget,
   };
 
-  const ctx: Context = { fleet, executor, out, render };
+  const toolCache = fileToolCache(join(settings.stateDir, "tools.json"), fleet.source || undefined);
+  const ctx: Context = { fleet, executor, out, render, toolCache };
   if (args.timeoutMs !== undefined) ctx.deadlineMs = args.timeoutMs;
   return ctx;
 }
@@ -323,10 +338,17 @@ interface ToolRow {
   description?: string;
   readOnly?: boolean;
   blockedBy?: string;
+  /** The tool's argument schema, carried when `--schema` asked for it. */
+  inputSchema?: Record<string, unknown>;
 }
 
 /** Mark each tool of one server with the block pattern that covers it. */
-function toRows(fleet: Fleet, serverName: string, tools: ToolDescriptor[]): ToolRow[] {
+function toRows(
+  fleet: Fleet,
+  serverName: string,
+  tools: ToolDescriptor[],
+  schema = false,
+): ToolRow[] {
   return tools.map((tool) => {
     const address = `${serverName}.${tool.name}`;
     const pattern = fleet.blockedBy(address);
@@ -334,6 +356,9 @@ function toRows(fleet: Fleet, serverName: string, tools: ToolDescriptor[]): Tool
     if (tool.description !== undefined) row.description = tool.description;
     if (tool.annotations?.readOnlyHint === true) row.readOnly = true;
     if (pattern) row.blockedBy = pattern;
+    // Schemas are large, and a listing is read far more often than a schema is
+    // needed, so they are carried only when the flag asked for them.
+    if (schema && tool.inputSchema !== undefined) row.inputSchema = tool.inputSchema;
     return row;
   });
 }
@@ -349,7 +374,12 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
   for (const name of names) {
     try {
       const { value } = await run(ctx, name, { kind: "listTools" });
-      rows.push(...toRows(ctx.fleet, name, value));
+      // Every listing feeds the record the error path reads later.
+      ctx.toolCache.put(
+        name,
+        value.map((t) => t.name),
+      );
+      rows.push(...toRows(ctx.fleet, name, value, args.schema));
     } catch (err) {
       // One unreachable server must not sink a whole-fleet listing.
       const row: { server: string; error: string; class?: string } = {
@@ -373,6 +403,9 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
         : "";
       const desc = row.description ? `  ${firstLine(row.description)}` : "";
       lines.push(`${row.address.padEnd(width)}${desc}${mark}`);
+      if (row.inputSchema !== undefined) {
+        lines.push(indent(JSON.stringify(row.inputSchema, null, 2), "    "));
+      }
     }
     for (const e of errors) {
       lines.push(`! ${e.server}: ${e.error}`);
@@ -392,16 +425,37 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
   const query = required(args, 0, "call needs a server.tool address");
 
   const split = splitAddress(query);
-  if (!split) throw new UsageError(`"${query}" is not a server.tool address`);
+  if (!split) {
+    throw new UsageError(`"${query}" is not a server.tool address. ${fleetListing(ctx)}`);
+  }
 
   // Read the arguments before connecting, so a bad payload costs no process.
-  const rawArgs = parseArguments(readArgumentText(args.positionals[1], readStdinSync));
+  const argSpec = args.positionals[1];
+  const rawArgs = parseArguments(
+    readArgumentText(argSpec, readStdinSync, undefined, args.argsFile),
+    argSpec,
+  );
 
-  const serverName = ctx.fleet.resolveServer(split.server);
+  let serverName: string;
+  try {
+    serverName = ctx.fleet.resolveServer(split.server);
+  } catch (err) {
+    // The fleet names its servers; a call that named none of them also needs
+    // their tools, because the tool is what the caller was actually reaching
+    // for and the server name is only how it is spelled.
+    if (err instanceof UnknownServerError) {
+      throw new UnknownServerError(`Unknown server "${split.server}". ${fleetListing(ctx)}`);
+    }
+    throw err;
+  }
   // An address the profile blocks outright never reaches the server at all.
   refuseIfBlocked(ctx, `${serverName}.${split.tool}`);
 
   const tools = await run(ctx, serverName, { kind: "listTools" });
+  ctx.toolCache.put(
+    serverName,
+    tools.value.map((t) => t.name),
+  );
   const toolName = pickTool(ctx, `${serverName}.${split.tool}`, serverName, tools.value);
   const executed = await run(ctx, serverName, { kind: "callTool", name: toolName, args: rawArgs });
   const result = executed.value;
@@ -414,9 +468,14 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
     );
   }
 
-  // The --json path is untouched: it serialises the raw result object, so no
-  // pruning, describing, re-encoding or intent narrowing can ever reach it.
-  ctx.out.emit(result, () => renderContent(result, renderIntent(ctx.render, args.intent)));
+  const render = renderIntent(ctx.render, args.intent);
+  // Both paths render the same result; only the reader differs. The JSON path
+  // falls back to the text rendering whenever the result is not one JSON
+  // document, so the two never disagree about what a result says.
+  ctx.out.emitLazy(
+    () => callEnvelope(result, executed.lane, render, args.intent),
+    () => renderContent(result, render),
+  );
   return result.isError === true ? EXIT_FAILURE : EXIT_OK;
 }
 
@@ -429,6 +488,45 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
  */
 function renderIntent(render: RenderOptions, intent: string | undefined): RenderOptions {
   return intent === undefined ? render : { ...render, intent };
+}
+
+/**
+ * The object `--json` prints for one call.
+ *
+ * The shape mirrors the failure envelope `fail()` writes, so a caller tests
+ * `.ok` once and then reads `.result` or `.error`. `lane` says whether the warm
+ * daemon or a fresh connection served the call: a caller running under a
+ * narrowed `MCP_CLI_CONFIG` needs that to know what its narrowing bought.
+ */
+function callEnvelope(
+  result: { isError?: boolean },
+  lane: string,
+  render: RenderOptions,
+  intent: string | undefined,
+): Record<string, unknown> {
+  const isError = result.isError === true;
+
+  // An intent asked for an answer, not a document, and the text path already
+  // searched the whole stored text for it. The JSON path carries that answer.
+  if (intent !== undefined) {
+    return { ok: !isError, isError, lane, result: renderContent(result, render) };
+  }
+
+  const text = textOf(result);
+  const envelope =
+    text === undefined
+      ? { result: renderContent(result, render) }
+      : buildEnvelope(text, renderContent(result, render), {
+          prune: render.prune,
+          store: render.store,
+        });
+
+  const out: Record<string, unknown> = { ok: !isError, isError, lane, result: envelope.result };
+  if (envelope.spill !== undefined) {
+    out.spill = envelope.spill;
+    out.withheldBytes = envelope.withheldBytes ?? 0;
+  }
+  return out;
 }
 
 /* ---------------------------------------------------------------- spill -- */
@@ -456,7 +554,37 @@ function refuseIfBlocked(ctx: Context, address: string): void {
   }
 }
 
-/** Exact, then fuzzy, then the blocklist check. Returns the bare tool name. */
+/**
+ * Indent every line of a block, so a schema sits under the tool it belongs to.
+ */
+function indent(text: string, prefix: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line === "" ? line : `${prefix}${line}`))
+    .join("\n");
+}
+
+/**
+ * Every configured server with the tools it last showed.
+ *
+ * This is the widest of the three answers an unresolvable address can get, and
+ * it is read from the record on disk, never fetched. A fan-out over a whole
+ * fleet costs tens of seconds and dials servers that are only failing, which is
+ * far too much to spend on an error message.
+ */
+function fleetListing(ctx: Context): string {
+  const lines = serversWithTools(ctx.toolCache, ctx.fleet.names());
+  return `Configured servers:\n${lines.map((l) => `  ${l}`).join("\n")}`;
+}
+
+/**
+ * Exact, then fuzzy, then the blocklist check. Returns the bare tool name.
+ *
+ * A failure here answers with as much as it can determine. The tool list has
+ * already been fetched by the caller, and each descriptor carries its schema,
+ * so naming the likely tool and printing the call for it costs nothing beyond
+ * the comparison.
+ */
 function pickTool(
   ctx: Context,
   query: string,
@@ -467,10 +595,7 @@ function pickTool(
   const match = resolveAddress(query, addresses);
 
   if (match.kind === "none") {
-    throw new ServerError(
-      `No tool matches "${query}". Run: mcp-cli tools ${serverName}`,
-      serverName,
-    );
+    throw new ServerError(noMatchMessage(query, serverName, tools, addresses), serverName);
   }
   if (match.kind === "ambiguous") {
     throw new ServerError(
@@ -484,6 +609,32 @@ function pickTool(
 
   refuseIfBlocked(ctx, match.address);
   return match.address.slice(serverName.length + 1);
+}
+
+/**
+ * What to say when no tool of a known server matches the address.
+ *
+ * One tool close enough to be a typo gets the call that would have worked.
+ * Otherwise the server's whole tool list goes in the message: the caller has
+ * already paid for that listing, and telling it to run a second command to see
+ * what it could have been shown is a round trip for nothing.
+ */
+function noMatchMessage(
+  query: string,
+  serverName: string,
+  tools: ToolDescriptor[],
+  addresses: string[],
+): string {
+  const guess = nearest(query, addresses);
+  if (guess !== undefined) {
+    const tool = tools.find((t) => `${serverName}.${t.name}` === guess);
+    const example = tool ? callExample(guess, tool) : undefined;
+    const how = example ?? `mcp-cli call ${guess} '{}'`;
+    return `No tool matches "${query}". Did you mean ${guess}?\n  ${how}`;
+  }
+  const names = tools.map((t) => `${serverName}.${t.name}`);
+  const listing = names.length > 0 ? names.map((n) => `  ${n}`).join("\n") : "  (no tools)";
+  return `No tool matches "${query}". ${serverName} has:\n${listing}`;
 }
 
 /* ----------------------------------------------------------------- info -- */
