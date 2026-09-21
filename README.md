@@ -328,10 +328,12 @@ for the callback, exchanges the code, and proves the token with one
 
 **Scope follows the specification.** The client requests the scope the 401
 challenge names, else the `scopes_supported` of the resource metadata, else
-none. A per-server `auth.scope` is an explicit opt-in that widens the grant;
-`--scope` on `login` does the same for one login. Nothing is added to obtain a
-refresh token: whether one is issued is what `auth status` reports as
-`refreshable`.
+none. A per-server `auth.scope` is an explicit opt-in that widens the grant.
+`--scope` on `login` is a step-up: it requests the union of what the server
+granted before and the scope named now, through a fresh authorization request
+in the browser, never through a refresh, because a refresh grant cannot widen
+a scope. Nothing is added to obtain a refresh token: whether one is issued is
+what `auth status` reports as `refreshable`.
 
 **Where the credential lives.** Under `<stateDir>/auth/` (default
 `~/.agents/mcp-cli-state/auth/`), one `<server>.cred` per server holding the
@@ -365,6 +367,11 @@ token; no `circuits reset` and no restart is needed.
 
 A server that answers 401 with no OAuth challenge is reported as before: an
 `auth_required` failure that points at the `${NAME}` header it was given.
+
+A stored credential is bound to the URL it was minted for. When a config entry
+keeps its name and changes its `url`, no token is sent to the new origin: a
+call reports `oauth_login_required` naming both URLs, `auth status` shows
+`stale-url`, and the next `auth login` replaces the record.
 
 ### Profiles
 

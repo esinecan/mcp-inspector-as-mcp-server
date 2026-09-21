@@ -9,7 +9,7 @@
  * the command reports success, so "logged in" means "the server answered".
  */
 
-import { auth, Client } from "@modelcontextprotocol/client";
+import { auth, Client, computeScopeUnion } from "@modelcontextprotocol/client";
 import { createTransport, versionNegotiationFor, type TransportConfig } from "../transport.js";
 import { CLIENT_NAME, CLIENT_VERSION } from "../cli/server-session.js";
 import type { ServerEntry } from "../cli/config.js";
@@ -17,7 +17,7 @@ import { ClassifiedError } from "../supervise/classify.js";
 import { CallbackError, listenForCallback } from "./callback.js";
 import { classifyOAuthFailure } from "./classify.js";
 import { headlessAuth, McpCliOAuthProvider } from "./provider.js";
-import type { CredentialStore } from "./store.js";
+import { canonicalServerUrl, type CredentialStore } from "./store.js";
 import type { AuthSettings } from "./index.js";
 import { providerFor } from "./index.js";
 
@@ -62,6 +62,12 @@ export async function login(options: LoginOptions): Promise<LoginSummary> {
     });
   }
 
+  // A record minted for another URL under this name is replaced, never reused.
+  const held = store.meta(server);
+  if (held !== undefined && canonicalServerUrl(held.serverUrl) !== canonicalServerUrl(entry.url)) {
+    await store.delete(server);
+  }
+
   let authorizationUrl: URL | undefined;
   const requestedPort =
     options.callbackPort ?? store.meta(server)?.redirectPort ?? settings.callbackPort;
@@ -86,25 +92,41 @@ export async function login(options: LoginOptions): Promise<LoginSummary> {
     timeoutMs: options.timeoutMs,
     stateMatches: (state) => provider.stateMatches(state),
   });
-  // A port in use rejects here, before any browser opens.
-  const listening = listener.result.catch((err: Error) => err);
+
+  // An explicit scope is a step-up: the union of what the server granted
+  // before and what is asked for now, through a fresh authorization request,
+  // because a refresh grant cannot widen a scope (RFC 6749 §6).
+  const previousScope = (await provider.current())?.tokens?.scope;
+  const scope =
+    options.scope !== undefined ? computeScopeUnion(previousScope, options.scope) : undefined;
+  const forceReauthorization = options.scope !== undefined;
 
   let via: LoginSummary["via"];
   try {
-    const first = await auth(provider, { serverUrl: entry.url, scope: options.scope });
+    // The listener must own the port before anything else happens: a port in
+    // use fails here, before discovery, before registration, before a browser.
+    try {
+      await listener.ready;
+    } catch (err) {
+      throw new ClassifiedError({
+        class: "bad_argument",
+        code: "oauth_callback_port_in_use",
+        message: `${server}: ${(err as Error).message}`,
+        remediation: `Run: mcp-cli auth login ${server} --callback-port <n>`,
+      });
+    }
+    const first = await auth(provider, { serverUrl: entry.url, scope, forceReauthorization });
     if (first === "AUTHORIZED") {
       via = "refresh";
     } else {
       if (!authorizationUrl) throw new Error("the flow asked for a redirect but gave no URL");
-      const early = await Promise.race([listening, Promise.resolve(undefined)]);
-      if (early instanceof Error) throw early;
       await options.onUrl(authorizationUrl.toString());
       const callback = await listener.result;
       const second = await auth(provider, {
         serverUrl: entry.url,
         authorizationCode: callback.code,
         iss: callback.iss,
-        scope: options.scope,
+        scope,
       });
       if (second !== "AUTHORIZED") throw new Error("the code exchange did not authorize");
       via = "browser";

@@ -210,3 +210,34 @@ describe.skipIf(process.platform !== "win32")("dpapi cipher on Windows", () => {
     );
   }, 30_000);
 });
+
+describe("file backend, review fixes", () => {
+  it("moves the stamp forward even when two writes share a millisecond", async () => {
+    const store = credentialStore(join(dir, "auth"), PLAIN_CIPHER, () => 7000);
+    await store.save("mock", record);
+    const first = store.meta("mock")?.updatedAt;
+    await store.save("mock", record);
+    const second = store.meta("mock")?.updatedAt;
+    expect(first).toBe(7000);
+    expect(second).toBe(7001);
+  });
+
+  it("writes the blob before the sidecar, so a failed protect leaves the old sidecar in place", async () => {
+    const store = credentialStore(join(dir, "auth"), PLAIN_CIPHER, () => 8000);
+    await store.save("mock", record);
+    const before = readFileSync(join(dir, "auth", "mock.meta.json"), "utf8");
+    const failing: CredentialCipher = {
+      name: "file",
+      protect: async () => {
+        throw new Error("cannot protect");
+      },
+      unprotect: async (b) => b,
+    };
+    const broken = credentialStore(join(dir, "auth"), failing, () => 9000);
+    await expect(broken.save("mock", { ...record, expiresAt: 1 })).rejects.toThrow(
+      /cannot protect/,
+    );
+    expect(readFileSync(join(dir, "auth", "mock.meta.json"), "utf8")).toBe(before);
+    expect((await store.load("mock"))?.expiresAt).toBe(4000);
+  });
+});

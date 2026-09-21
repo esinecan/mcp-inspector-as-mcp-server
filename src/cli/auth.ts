@@ -13,14 +13,14 @@ import { BlockedError, UsageError } from "./errors.js";
 import { loadFleet } from "./fleet.js";
 import { Output } from "./output.js";
 import { authSettings, credentialStoreFor, login, refresh } from "../auth/index.js";
-import type { CredentialMeta } from "../auth/store.js";
+import { canonicalServerUrl, type CredentialMeta } from "../auth/store.js";
 import { openBrowser } from "../auth/browser.js";
 import { ClassifiedError } from "../supervise/classify.js";
 import { SupervisedError, newTrace } from "../supervise/index.js";
 
 const EXIT_OK = 0;
 
-type CredentialState = "none" | "valid" | "expiring" | "expired" | "refreshable";
+type CredentialState = "none" | "valid" | "expiring" | "expired" | "refreshable" | "stale-url";
 
 /** One row of `auth status`. Nothing in it is secret. */
 export interface StatusRow {
@@ -40,7 +40,18 @@ export interface StatusRow {
 /** Five minutes: a token that expires within it is reported as expiring. */
 const EXPIRING_MS = 5 * 60_000;
 
-export function stateOf(meta: CredentialMeta | undefined, now = Date.now()): CredentialState {
+export function stateOf(
+  meta: CredentialMeta | undefined,
+  now = Date.now(),
+  entryUrl?: string,
+): CredentialState {
+  if (
+    meta &&
+    entryUrl !== undefined &&
+    canonicalServerUrl(meta.serverUrl) !== canonicalServerUrl(entryUrl)
+  ) {
+    return "stale-url";
+  }
   if (!meta || !meta.hasAccessToken) return meta?.refreshable ? "refreshable" : "none";
   if (meta.expiresAt === undefined) return "valid";
   if (meta.expiresAt <= now) return meta.refreshable ? "refreshable" : "expired";
@@ -52,11 +63,12 @@ export function statusRow(
   server: string,
   meta: CredentialMeta | undefined,
   backend: string,
+  entryUrl?: string,
 ): StatusRow {
   const row: StatusRow = {
     server,
     backend: meta?.backend ?? backend,
-    state: stateOf(meta),
+    state: stateOf(meta, Date.now(), entryUrl),
     refreshable: meta?.refreshable === true,
   };
   if (meta?.serverUrl !== undefined) row.serverUrl = meta.serverUrl;
@@ -169,12 +181,15 @@ export async function cmdAuth(args: ParsedArgs): Promise<number> {
           ? fleet
               .names()
               .filter((name) => fleet.entry(name).url !== undefined)
-              .map((name) => statusRow(name, store.meta(name), store.backend))
+              .map((name) =>
+                statusRow(name, store.meta(name), store.backend, fleet.entry(name).url),
+              )
           : [
               statusRow(
                 fleet.resolveServer(query),
                 store.meta(fleet.resolveServer(query)),
                 store.backend,
+                fleet.entry(fleet.resolveServer(query)).url,
               ),
             ];
       out.emit({ store: store.dir, backend: store.backend, servers: rows }, () =>

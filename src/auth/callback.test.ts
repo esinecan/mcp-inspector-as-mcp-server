@@ -78,3 +78,43 @@ describe("listenForCallback", () => {
     await expect(first.result).rejects.toThrow();
   });
 });
+
+describe("listenForCallback, review fixes", () => {
+  it("rejects a forged error callback whose state is wrong and keeps waiting", async () => {
+    const port = await freePort();
+    const listener = listenForCallback({
+      port,
+      stateMatches: (s) => s === "good",
+      timeoutMs: 5000,
+    });
+    await listener.ready;
+    const forged = await fetch(
+      `http://127.0.0.1:${port}/callback?error=access_denied&state=forged`,
+    );
+    expect(forged.status).toBe(400);
+    const good = await fetch(`http://127.0.0.1:${port}/callback?code=fine&state=good`);
+    expect(good.status).toBe(200);
+    await expect(listener.result).resolves.toEqual({ code: "fine" });
+  });
+
+  it("still surfaces a genuine error callback that carries the right state", async () => {
+    const port = await freePort();
+    const listener = listenForCallback({
+      port,
+      stateMatches: (s) => s === "good",
+      timeoutMs: 5000,
+    });
+    await listener.ready;
+    await fetch(`http://127.0.0.1:${port}/callback?error=access_denied&state=good`);
+    await expect(listener.result).rejects.toBeInstanceOf(CallbackError);
+  });
+
+  it("settles ready on listen and rejects ready on a port in use", async () => {
+    const port = await freePort();
+    const first = listenForCallback({ port, stateMatches: () => true, timeoutMs: 5000 });
+    await expect(first.ready).resolves.toBeUndefined();
+    const second = listenForCallback({ port, stateMatches: () => true, timeoutMs: 5000 });
+    await expect(second.ready).rejects.toThrow(/is in use/);
+    first.close();
+  });
+});

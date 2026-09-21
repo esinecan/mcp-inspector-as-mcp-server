@@ -54,7 +54,7 @@
 
 .PARAMETER Action
     install | status | repair | watchdog | run | probe-restart | rollback |
-    uninstall | pause | resume
+    uninstall | pause | resume | shims
 
 .PARAMETER Service
     With -Action run: daemon or bridge.
@@ -84,7 +84,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('install', 'status', 'repair', 'watchdog', 'run', 'probe-restart', 'rollback', 'uninstall', 'pause', 'resume')]
+    [ValidateSet('install', 'status', 'repair', 'watchdog', 'run', 'probe-restart', 'rollback', 'uninstall', 'pause', 'resume', 'shims')]
     [string]$Action = 'status',
     [ValidateSet('', 'daemon', 'bridge')]
     [string]$Service = '',
@@ -253,7 +253,9 @@ function Write-Shims {
     if (-not (Test-Path $ShimDir)) { New-Item -ItemType Directory -Force $ShimDir | Out-Null }
 
     $common = Get-CommonArgs
-    $nodeArg = if ($Node -ne '') { ' -Node ""{0}""' -f $Node } else { '' }
+    # The resolved absolute executable, always: the task runs without this
+    # shell's PATH.
+    $nodeArg = ' -Node ""{0}""' -f $NodeExe
     $daemonCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action run -Service daemon {1}{2}' -f $ScriptPath, $common, $nodeArg)
     $bridgeCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action run -Service bridge {1}{2}' -f $ScriptPath, $common, $nodeArg)
     $watchdogCmd = ('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{0}"" -Action watchdog {1}' -f $ScriptPath, $common)
@@ -451,6 +453,13 @@ function Invoke-Supervisor {
     $verb = if ($Kind -eq 'daemon') { 'daemon' } else { 'bridge' }
     $pidFile = Get-SupervisorPidFile $Kind
     if (-not (Test-Path $StateDir)) { New-Item -ItemType Directory -Force $StateDir | Out-Null }
+    # Ownership before anything else: a living supervisor of this service and
+    # prefix keeps the pid file, and this one leaves without starting a loop.
+    $owner = Get-SupervisorProcess $Kind
+    if ($null -ne $owner -and [int]$owner.ProcessId -ne [int]$PID) {
+        Write-Log "another supervisor (pid $($owner.ProcessId)) owns $Kind; not starting a second loop"
+        exit 3
+    }
     Set-Content -Path $pidFile -Value $PID -Encoding ascii
     Write-Log "supervisor pid $PID for $Kind on port $port; entry $Entry"
     $count = 0
@@ -691,21 +700,33 @@ switch ($Action) {
         New-Backup | Out-Null
         Write-Shims $nodeExe
         Register-ServiceTask $TaskDaemon $ShimDaemon
-        if (-not $NoBridge) { Register-ServiceTask $TaskBridge $ShimBridge } elseif ($null -ne (Get-TaskOrNull $TaskBridge)) { Unregister-ScheduledTask -TaskName $TaskBridge -Confirm:$false }
+        if (-not $NoBridge) {
+            Register-ServiceTask $TaskBridge $ShimBridge
+        } elseif ($null -ne (Get-TaskOrNull $TaskBridge)) {
+            # A bridge that is running is ended before its task goes, so no
+            # supervisor and no node outlive their task.
+            Stop-Service 'bridge' $TaskBridge
+            Unregister-ScheduledTask -TaskName $TaskBridge -Confirm:$false
+            Write-Log "removed task $TaskBridge (-NoBridge)"
+        }
         Register-WatchdogTask
         if ($Restart) {
             Stop-Service 'daemon' $TaskDaemon
             if (-not $NoBridge) { Stop-Service 'bridge' $TaskBridge }
         }
         $ok = $true
-        if ($Restart -or -not (Test-Health $DaemonPort '/health/live')) { $ok = (Start-Service 'daemon' $TaskDaemon $DaemonPort '/health/ready' 90) -and $ok } else { Write-Log 'daemon already healthy; left running (use -Restart to load the new build)' }
+        if ($Restart -or -not (Test-Health $DaemonPort '/health/ready')) { $ok = (Start-Service 'daemon' $TaskDaemon $DaemonPort '/health/ready' 90) -and $ok } else { Write-Log 'daemon already ready; left running (use -Restart to load the new build)' }
         if (-not $NoBridge) {
-            if ($Restart -or -not (Test-Health $BridgePort '/health/live')) { $ok = (Start-Service 'bridge' $TaskBridge $BridgePort '/health/ready' 60) -and $ok } else { Write-Log 'bridge already healthy; left running (use -Restart to load the new build)' }
+            if ($Restart -or -not (Test-Health $BridgePort '/health/ready')) { $ok = (Start-Service 'bridge' $TaskBridge $BridgePort '/health/ready' 60) -and $ok } else { Write-Log 'bridge already ready; left running (use -Restart to load the new build)' }
         }
         Show-Status
         if (-not $ok) { exit 1 }
     }
     'status' { Show-Status }
+    'shims' {
+        # The shims alone, for a look at what install would register.
+        Write-Shims (Resolve-Node)
+    }
     'repair' {
         $r = Invoke-Watch -Verbose_
         Show-Status

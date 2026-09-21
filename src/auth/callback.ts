@@ -25,6 +25,8 @@ export interface CallbackOptions {
 }
 
 export interface CallbackListener {
+  /** Resolves once the port is bound; rejects when it cannot be. */
+  ready: Promise<void>;
   /** Resolves with the code, rejects on an AS error, a timeout, or a port in use. */
   result: Promise<CallbackResult>;
   close(): void;
@@ -51,6 +53,13 @@ export function listenForCallback(options: CallbackOptions): CallbackListener {
   let timer: NodeJS.Timeout | undefined;
   let settled = false;
   let abandon: (() => void) | undefined;
+  let markReady: (() => void) | undefined;
+  let markUnready: ((err: Error) => void) | undefined;
+  const ready = new Promise<void>((resolve, reject) => {
+    markReady = resolve;
+    markUnready = reject;
+  });
+  ready.catch(() => {});
 
   const result = new Promise<CallbackResult>((resolve, reject) => {
     const finish = (fn: () => void) => {
@@ -69,6 +78,16 @@ export function listenForCallback(options: CallbackOptions): CallbackListener {
         res.writeHead(404, { "content-type": "text/plain" }).end("not found");
         return;
       }
+      // The state is checked before anything else is read: a forged error
+      // would otherwise end the login as surely as a forged code would.
+      if (!options.stateMatches(url.searchParams.get("state"))) {
+        res
+          .writeHead(400, { "content-type": "text/html; charset=utf-8" })
+          .end(
+            PAGE("Unexpected callback", "This callback does not belong to the login in progress."),
+          );
+        return;
+      }
       const error = url.searchParams.get("error");
       if (error) {
         res
@@ -77,14 +96,6 @@ export function listenForCallback(options: CallbackOptions): CallbackListener {
         finish(() =>
           reject(new CallbackError(error, url.searchParams.get("error_description") ?? undefined)),
         );
-        return;
-      }
-      if (!options.stateMatches(url.searchParams.get("state"))) {
-        res
-          .writeHead(400, { "content-type": "text/html; charset=utf-8" })
-          .end(
-            PAGE("Unexpected callback", "This callback does not belong to the login in progress."),
-          );
         return;
       }
       const code = url.searchParams.get("code");
@@ -108,10 +119,12 @@ export function listenForCallback(options: CallbackOptions): CallbackListener {
         err.code === "EADDRINUSE"
           ? `port ${options.port} on ${host} is in use; pass --callback-port <n> to use another`
           : err.message;
+      markUnready?.(new Error(message));
       finish(() => reject(new Error(message)));
     });
 
     server.listen(options.port, host, () => {
+      markReady?.();
       timer = setTimeout(() => {
         finish(() =>
           reject(
@@ -137,5 +150,5 @@ export function listenForCallback(options: CallbackOptions): CallbackListener {
     }
   };
 
-  return { result, close };
+  return { ready, result, close };
 }

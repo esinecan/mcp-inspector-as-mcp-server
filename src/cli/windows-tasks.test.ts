@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { spawnSync } from "child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { spawn, spawnSync } from "child_process";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -213,4 +213,142 @@ describe.runIf(onWindows)("the recovery block of status", () => {
     expect(run.status).not.toBe(0);
     expect(run.stderr).toContain("-Service daemon or -Service bridge");
   }, 90_000);
+});
+
+function ps(args: string[], timeout = 60_000) {
+  return spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args],
+    { encoding: "utf8", timeout },
+  );
+}
+
+describe.runIf(onWindows)("the lifecycle script, review fixes", () => {
+  it("serialises the resolved absolute node executable into every shim", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-cli-tasks-shims-"));
+    try {
+      const config = join(dir, "mcp-cli.json");
+      writeFileSync(config, JSON.stringify({ mcpServers: {} }), "utf8");
+      const run = ps([
+        "-Action",
+        "shims",
+        "-Config",
+        config,
+        "-ShimDir",
+        join(dir, "bin"),
+        "-StateDir",
+        join(dir, "state"),
+        "-LogDir",
+        join(dir, "logs"),
+        "-DaemonPort",
+        "1",
+        "-BridgePort",
+        "1",
+        "-TaskPrefix",
+        "mcp-cli-test-shim",
+      ]);
+      expect(run.stderr).toBe("");
+      expect(run.status).toBe(0);
+      const daemon = readFileSync(join(dir, "bin", "mcp-cli-test-shim-daemon-hidden.vbs"), "utf8");
+      const bridge = readFileSync(join(dir, "bin", "mcp-cli-test-shim-bridge-hidden.vbs"), "utf8");
+      const nodeExe = process.execPath.replace(/\\/g, "\\\\");
+      for (const shim of [daemon, bridge]) {
+        expect(shim).toContain("-Action run -Service ");
+        expect(shim).toMatch(new RegExp('-Node ""[A-Za-z]:\\\\.*node\\.exe""'));
+        expect(shim).not.toContain("daemon serve");
+        expect(shim).not.toContain("bridge serve");
+      }
+      expect(daemon).toContain("-Service daemon");
+      expect(bridge).toContain("-Service bridge");
+      void nodeExe;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("refuses to start a second supervisor loop while a living one owns the pid file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mcp-cli-tasks-own-"));
+    let first: ReturnType<typeof spawn> | undefined;
+    try {
+      // A root whose entry point never exits, so the first loop stays alive.
+      mkdirSync(join(dir, "root", "dist", "cli"), { recursive: true });
+      writeFileSync(
+        join(dir, "root", "dist", "cli", "index.js"),
+        "setInterval(() => {}, 1000);\n",
+        "utf8",
+      );
+      const config = join(dir, "mcp-cli.json");
+      writeFileSync(config, JSON.stringify({ mcpServers: {} }), "utf8");
+      const state = join(dir, "state");
+      const common = [
+        "-Service",
+        "daemon",
+        "-Root",
+        join(dir, "root"),
+        "-Config",
+        config,
+        "-StateDir",
+        state,
+        "-LogDir",
+        join(dir, "logs"),
+        "-DaemonPort",
+        "1",
+        "-BridgePort",
+        "1",
+        "-TaskPrefix",
+        "mcp-cli-test-own",
+        "-Node",
+        process.execPath,
+      ];
+      first = spawn(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          script,
+          "-Action",
+          "run",
+          ...common,
+        ],
+        { stdio: "ignore", windowsHide: true },
+      );
+      const pidFile = join(state, "daemon-supervisor.pid");
+      const deadline = Date.now() + 30_000;
+      while (!existsSync(pidFile) && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 200));
+      expect(existsSync(pidFile)).toBe(true);
+      const owner = readFileSync(pidFile, "utf8").trim();
+      expect(owner).toBe(String(first.pid));
+
+      const second = ps(["-Action", "run", ...common], 60_000);
+      expect(second.status).toBe(3);
+      expect(readFileSync(pidFile, "utf8").trim()).toBe(owner);
+      const log = readFileSync(join(state, "daemon-supervisor.log"), "utf8");
+      expect(log).toMatch(new RegExp(`another supervisor \\(pid ${owner}\\) owns daemon`));
+    } finally {
+      if (first?.pid)
+        spawnSync("taskkill", ["/PID", String(first.pid), "/T", "/F"], { stdio: "ignore" });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  it("gates install on readiness and ends a live bridge before -NoBridge unregisters it", () => {
+    // These two are contracts of the install branch; they are pinned here by
+    // the script's text because a real install registers tasks.
+    const text = readFileSync(script, "utf8");
+    const install = text.slice(text.indexOf("    'install' {"), text.indexOf("    'status' {"));
+    expect(install).not.toContain("'/health/live'");
+    expect((install.match(/Test-Health \$DaemonPort '\/health\/ready'/g) ?? []).length).toBe(1);
+    expect((install.match(/Test-Health \$BridgePort '\/health\/ready'/g) ?? []).length).toBe(1);
+    const noBridge = install.slice(
+      install.indexOf("elseif ($null -ne (Get-TaskOrNull $TaskBridge))"),
+    );
+    expect(noBridge.indexOf("Stop-Service 'bridge' $TaskBridge")).toBeGreaterThan(-1);
+    expect(noBridge.indexOf("Stop-Service 'bridge' $TaskBridge")).toBeLessThan(
+      noBridge.indexOf("Unregister-ScheduledTask -TaskName $TaskBridge"),
+    );
+  });
 });

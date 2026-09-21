@@ -218,25 +218,31 @@ export function credentialStore(
       const stored: CredentialRecord = { ...record, serverUrl };
       const plain = Buffer.from(JSON.stringify(stored), "utf8");
       const blob = await cipher.protect(plain, entropyFor(serverUrl));
+      // The stamp only ever moves forward, even when two writes share a
+      // millisecond, because a reader that saw the old stamp must see a new
+      // one for every new blob.
+      const previous = readMeta(server)?.updatedAt ?? 0;
       const meta: CredentialMeta = {
         server,
         serverUrl,
         backend: cipher.name,
         hasAccessToken: typeof stored.tokens?.access_token === "string",
         refreshable: typeof stored.tokens?.refresh_token === "string",
-        updatedAt: now(),
+        updatedAt: Math.max(now(), previous + 1),
       };
       if (stored.issuer !== undefined) meta.issuer = stored.issuer;
       if (stored.client?.client_id !== undefined) meta.clientId = stored.client.client_id;
       if (stored.tokens?.scope !== undefined) meta.scope = stored.tokens.scope;
       if (stored.expiresAt !== undefined) meta.expiresAt = stored.expiresAt;
       if (stored.redirectPort !== undefined) meta.redirectPort = stored.redirectPort;
-      // The sidecar first, so a reader that sees the blob also sees its serverUrl.
-      writeAtomic(metaPath(server), `${JSON.stringify(meta, null, 2)}\n`);
+      // The blob first and the sidecar last: the sidecar's stamp is what a
+      // daemon reads as "new credential", so it must never point at a blob
+      // that is not there yet.
       writeAtomic(
         blobPath(server),
         cipher.name === "file" ? plain : `${blob.toString("base64")}\n`,
       );
+      writeAtomic(metaPath(server), `${JSON.stringify(meta, null, 2)}\n`);
     },
 
     async delete(server) {

@@ -110,9 +110,23 @@ export class McpCliOAuthProvider implements OAuthClientProvider {
   }
 
   /** The record as the store holds it; loaded once per process. */
+  /**
+   * The URL the stored record was minted for when it is not this server's
+   * URL. A config entry that kept its name and changed its `url` must never
+   * send the old token to the new origin, so such a record is treated as
+   * absent by every reader and replaced by the next login.
+   */
+  staleUrl?: string;
+
   async current(): Promise<CredentialRecord | undefined> {
     if (!this.loaded) {
-      this.record = await this.options.store.load(this.options.server);
+      const loaded = await this.options.store.load(this.options.server);
+      if (loaded !== undefined && canonicalServerUrl(loaded.serverUrl) !== this.serverUrl) {
+        this.staleUrl = loaded.serverUrl;
+        this.record = undefined;
+      } else {
+        this.record = loaded;
+      }
       this.hadTokens = this.record?.tokens !== undefined;
       this.loaded = true;
     }
@@ -282,6 +296,12 @@ export function headlessAuth(provider: McpCliOAuthProvider): HeadlessAuth {
         throw classifyOAuthFailure(err, provider.server);
       }
       const { resourceMetadataUrl, scope } = extractWWWAuthenticateParams(ctx.response);
+      if (provider.staleUrl !== undefined) {
+        throw loginRequired(
+          provider.server,
+          `the stored credential is for ${provider.staleUrl}, not ${provider.serverUrl}`,
+        );
+      }
       if (record?.tokens === undefined) {
         // No record: an OAuth challenge means "log in"; a bare 401 from a
         // server that takes a static header means the header is wrong.
