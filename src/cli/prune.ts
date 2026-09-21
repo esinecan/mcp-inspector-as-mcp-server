@@ -11,12 +11,14 @@
  * not asked to rewrite.
  */
 
+import { spillHint } from "./spill-hints.js";
 import type { SpillStore } from "./spill.js";
 
 /** What pruneText needs from the config's pruning block. */
 export interface PruneOptions {
   thresholdBytes: number;
   headBytes: number;
+  sourceRef?: string;
 }
 
 /**
@@ -66,7 +68,7 @@ function grouped(n: number): string {
 
 /** The one line that states what was withheld and how to read it back. */
 function handle(withheld: number, digest: string): string {
-  return `... ${grouped(withheld)} more bytes withheld. mcp-cli spill get ${digest}`;
+  return `... ${grouped(withheld)} more bytes withheld. ${spillHint(digest).text}`;
 }
 
 /**
@@ -82,7 +84,13 @@ export function pruneText(text: string, opts: PruneOptions, store: SpillStore): 
   }
 
   const digest = store.put(text);
+  if (opts.sourceRef) store.linkDerived?.(digest, opts.sourceRef);
   const head = headLines(text, opts.headBytes);
   const emitted = byteCount(head);
-  return { text: `${head}${handle(original - emitted, digest)}`, digest, original, emitted };
+  return {
+    text: `${head}${handle(original - emitted, opts.sourceRef ?? digest)}`,
+    digest,
+    original,
+    emitted,
+  };
 }

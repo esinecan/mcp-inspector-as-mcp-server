@@ -1,3 +1,4 @@
+import { spillHint } from "./spill-hints.js";
 /**
  * Item-level sampling of an oversize tabular result.
  *
@@ -22,6 +23,7 @@ import { cell } from "./encode.js";
 /** What sampleText needs from the config's pruning block. */
 export interface SampleOptions {
   thresholdBytes: number;
+  sourceRef?: string;
 }
 
 /**
@@ -124,7 +126,7 @@ function byteCount(text: string): number {
  * handle of `pruneText`.
  */
 function sampleHandle(withheld: number, total: number, digest: string): string {
-  return `... ${withheld} of ${total} items withheld. mcp-cli spill get ${digest}`;
+  return `... ${withheld} of ${total} items withheld. ${spillHint(digest).text}`;
 }
 
 /**
@@ -215,16 +217,17 @@ export function sampleText(
   // so the keep-set cannot overlap and needs no guard against it.
 
   const digest = store.put(encoding.text);
+  if (opts.sourceRef) store.linkDerived?.(digest, opts.sourceRef);
   // The shrink prices every keep-set from the one split, so the loop is
   // arithmetic on the counts and the text itself is rendered once, at the end,
   // for the keep-set the loop settled on.
-  const prices = priceItems(encoding, digest);
+  const prices = priceItems(encoding, opts.sourceRef ?? digest);
   while (keptBytes(prices, first, last) >= opts.thresholdBytes && first + last > 2) {
     if (first < last) last--;
     else first--;
   }
   return {
-    text: keptText(encoding, first, last, digest),
+    text: keptText(encoding, first, last, opts.sourceRef ?? digest),
     digest,
     total,
     kept: first + last,

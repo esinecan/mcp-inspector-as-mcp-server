@@ -6,6 +6,13 @@
 import { UsageError } from "./errors.js";
 
 export interface ParsedArgs {
+  envelopeVersion?: 1 | 2;
+  select?: string[];
+  within?: string;
+  query?: string;
+  cursor?: string;
+  maxBytes?: number;
+  requestFile?: string;
   command?: string;
   positionals: string[];
   config?: string;
@@ -67,6 +74,13 @@ export const FORMATS = ["raw", "compact", "table", "sample"] as const;
 export { UsageError, UnknownServerError } from "./errors.js";
 
 const VALUE_FLAGS = new Set([
+  "--envelope-version",
+  "--select",
+  "--within",
+  "--query",
+  "--cursor",
+  "--max-bytes",
+  "--request-file",
   "--config",
   "--profile",
   "--timeout",
@@ -163,6 +177,30 @@ export function parseArgs(argv: string[]): ParsedArgs {
 
 function assign(parsed: ParsedArgs, flag: string, value: string): void {
   switch (flag) {
+    case "--envelope-version":
+      if (value !== "1" && value !== "2") throw new UsageError("envelope-version must be 1 or 2");
+      parsed.envelopeVersion = Number(value) as 1 | 2;
+      return;
+    case "--select":
+      (parsed.select ??= []).push(value);
+      return;
+    case "--within":
+      parsed.within = value;
+      return;
+    case "--query":
+      parsed.query = value;
+      return;
+    case "--cursor":
+      parsed.cursor = value;
+      return;
+    case "--request-file":
+      parsed.requestFile = value;
+      return;
+    case "--max-bytes":
+      if (!Number.isSafeInteger(Number(value)) || Number(value) < 1024 || Number(value) > 1048576)
+        throw new UsageError("max-bytes must be 1024..1048576");
+      parsed.maxBytes = Number(value);
+      return;
     case "--config":
       parsed.config = value;
       return;

@@ -163,9 +163,13 @@ export function createBridgeHttpServer(options: BridgeHttpOptions): HttpServer {
         return;
       }
 
+      const controller = new AbortController();
+      res.once("close", () => {
+        if (!res.writableEnded) controller.abort();
+      });
       gate.acquire().then(
         (release) => {
-          execBridged(request, options)
+          execBridged(request, { ...options, signal: controller.signal })
             .then(
               (result) => {
                 const cwd = (request as { cwd?: unknown }).cwd;

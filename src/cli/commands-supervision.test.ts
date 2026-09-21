@@ -163,7 +163,7 @@ describe("call through the executor", () => {
     };
     // The addressable field survives the pruning; the 30 kB leaf does not.
     expect(envelope.result.record.updated).toBe("2026-09-06");
-    expect(envelope.result.record.body).toMatch(/^\[30,000 bytes withheld\. mcp-cli spill get /);
+    expect(envelope.result.record.body).toMatch(/^\[30,000 bytes withheld\. mcp-cli spill query /);
     expect(envelope.withheldBytes).toBe(30_000);
     expect(envelope.spill).toMatch(/^[0-9a-f]{64}$/);
     // The whole envelope is far smaller than the payload it stands for.

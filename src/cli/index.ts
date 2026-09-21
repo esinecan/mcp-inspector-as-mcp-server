@@ -32,6 +32,9 @@ import { loadFleet, type Fleet } from "./fleet.js";
 import { CLIENT_VERSION, ServerError, type ToolDescriptor } from "./server-session.js";
 import { resolveAddress, splitAddress } from "./match.js";
 import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
+import { queryResult, sourceEnvelope } from "./result-query.js";
+import { spillHint } from "./spill-hints.js";
+import { retainSource } from "./result-source.js";
 import { buildEnvelope, textOf } from "./envelope.js";
 import { callExample, nearest } from "./example.js";
 import { fileToolCache, serversWithTools, type ToolCache } from "./tool-cache.js";
@@ -85,7 +88,7 @@ Usage:
   mcp-cli import-claude                    build the config from ~/.claude.json
   mcp-cli bridge <serve|mcp|selftest|exec> run host commands over the path contract
   mcp-cli daemon <start|stop|status|serve> keep server connections warm between calls
-  mcp-cli spill <get|path|prune>          read back a result that was spilled
+  mcp-cli spill <query|get|path|prune>    inspect or read back a result that was spilled
 
 Arguments for call and prompt are JSON, given as inline text, as "-" to read
 stdin, as "@path" to read a file, or with --args-file <path> for the same file
@@ -101,6 +104,11 @@ Global flags:
   --schema          with "tools", also show each tool's argument schema
   --format <raw|compact|table|sample>  how a text result is re-encoded, with "call"
   --intent <text>   narrow a stored result to what it asked for, with "call"
+  --envelope-version <1|2>  opt into typed call results (default 1)
+  --select <pointer>  exact field, repeatable, with spill query
+  --within <pointer> --query <words> --cursor <cursor> --max-bytes <n>
+                      spill query scope/search/page/budget (default 4096)
+  --request-file <path>  structured request for bridge exec
   --args-file <path>  read a call's JSON arguments from a file, without the @ sigil
   --limit <n>       with "search", how many rows
   --provider <name> with "search", one server instead of the route
@@ -181,7 +189,12 @@ export async function main(argv: string[]): Promise<number> {
         throw new UsageError(`Unknown command "${args.command}". Run mcp-cli --help.`);
     }
   } catch (err) {
-    return fail(new Output(args.json), err as Error, args.json);
+    return fail(
+      new Output(args.json),
+      err as Error,
+      args.json,
+      args.envelopeVersion === 2 || (args.command === "spill" && args.positionals[0] === "query"),
+    );
   } finally {
     await Promise.all(openExecutors.splice(0).map((executor) => executor.close()));
   }
@@ -195,7 +208,7 @@ export async function main(argv: string[]): Promise<number> {
  * the failure is the stable envelope on stdout, so a pipeline that reads
  * stdout always gets one JSON object, success or not.
  */
-function fail(out: Output, err: Error, json: boolean): number {
+function fail(out: Output, err: Error, json: boolean, v2 = false): number {
   const code = err instanceof CliError ? err.exitCode : EXIT_FAILURE;
   if (json) {
     // Any failure that knows its own envelope prints it; the rest get the plain one.
@@ -204,7 +217,10 @@ function fail(out: Output, err: Error, json: boolean): number {
       typeof withEnvelope.envelope === "function"
         ? withEnvelope.envelope()
         : plainEnvelope(err as CliError);
-    out.emit(envelope, () => "");
+    out.emit(
+      v2 ? { ...(envelope as object), schemaVersion: 2, result: { kind: "error" } } : envelope,
+      () => "",
+    );
   }
   out.note(err.message);
   if (err instanceof SupervisedError) {
@@ -269,7 +285,12 @@ export function context(args: ParsedArgs): Context {
     store: fileStateStore(join(settings.stateDir, "circuits.json")),
     events: settings.eventLog !== undefined ? fileSink(settings.eventLog) : NO_EVENTS,
     credentialStamp: (server) => authStore.stamp(server),
-    onFallback: (reason) => out.note(`the warm daemon did not serve this call: ${reason}`),
+    onFallback: (reason) => {
+      if (!args.json)
+        out.note(
+          `using ephemeral connection: ${reason === "config_mismatch" ? "scoped config differs" : "daemon is not running"}`,
+        );
+    },
   });
   openExecutors.push(executor);
 
@@ -366,7 +387,8 @@ function toRows(
 async function cmdTools(args: ParsedArgs): Promise<number> {
   const ctx = context(args);
   const target = args.positionals[0];
-  const names = target ? [ctx.fleet.resolveServer(target)] : ctx.fleet.names();
+  const exact = target ? splitAddress(target) : undefined;
+  const names = target ? [ctx.fleet.resolveServer(exact?.server ?? target)] : ctx.fleet.names();
 
   const rows: ToolRow[] = [];
   const errors: Array<{ server: string; error: string; class?: string }> = [];
@@ -379,7 +401,17 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
         name,
         value.map((t) => t.name),
       );
-      rows.push(...toRows(ctx.fleet, name, value, args.schema));
+      const selected = exact ? value.filter((t) => t.name === exact.tool) : value;
+      if (exact && selected.length === 0) {
+        const suggestion = nearest(
+          exact.tool,
+          value.map((t) => t.name),
+        );
+        throw new UsageError(
+          `Unknown tool "${exact.tool.slice(0, 120)}".${suggestion ? ` Try ${name}.${suggestion.slice(0, 120)}.` : ""}`,
+        );
+      }
+      rows.push(...toRows(ctx.fleet, name, selected, args.schema));
     } catch (err) {
       // One unreachable server must not sink a whole-fleet listing.
       const row: { server: string; error: string; class?: string } = {
@@ -391,6 +423,7 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
     }
   }
 
+  if (exact && !args.all && rows[0]?.blockedBy) refuseIfBlocked(ctx, rows[0].address);
   const visible = args.all ? rows : rows.filter((r) => !r.blockedBy);
 
   ctx.out.emit({ profile: ctx.fleet.profile.name, tools: visible, errors }, () => {
@@ -468,12 +501,33 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
     );
   }
 
-  const render = renderIntent(ctx.render, args.intent);
+  const ref = retainSource(ctx.render.store, result, { server: serverName, tool: toolName });
+  const execution = {
+    lane: executed.lane,
+    ...(executed.fallbackReason ? { fallbackReason: executed.fallbackReason } : {}),
+  };
+  if (args.envelopeVersion === 2) {
+    const extra = { lane: executed.lane, execution };
+    const view =
+      args.intent === undefined
+        ? sourceEnvelope(ctx.render.store, ref, extra, args.maxBytes)
+        : queryResult(
+            ctx.render.store,
+            { ref, query: args.intent, maxBytes: args.maxBytes },
+            extra,
+          );
+    ctx.out.emit(view, () => JSON.stringify(view, null, 2));
+    return result.isError === true ? EXIT_FAILURE : EXIT_OK;
+  }
+  const render = renderIntent({ ...ctx.render, sourceRef: ref }, args.intent);
   // Both paths render the same result; only the reader differs. The JSON path
   // falls back to the text rendering whenever the result is not one JSON
   // document, so the two never disagree about what a result says.
   ctx.out.emitLazy(
-    () => callEnvelope(result, executed.lane, render, args.intent),
+    () => ({
+      ...callEnvelope(result, executed.lane, render, args.intent),
+      ...(executed.fallbackReason ? { execution } : {}),
+    }),
     () => renderContent(result, render),
   );
   return result.isError === true ? EXIT_FAILURE : EXIT_OK;
@@ -519,11 +573,14 @@ function callEnvelope(
       : buildEnvelope(text, renderContent(result, render), {
           prune: render.prune,
           store: render.store,
+          sourceRef: render.sourceRef,
         });
 
   const out: Record<string, unknown> = { ok: !isError, isError, lane, result: envelope.result };
   if (envelope.spill !== undefined) {
     out.spill = envelope.spill;
+    out.source = { ref: render.sourceRef ?? envelope.spill };
+    out.next = spillHint(render.sourceRef ?? envelope.spill);
     out.withheldBytes = envelope.withheldBytes ?? 0;
   }
   return out;
@@ -536,6 +593,18 @@ function cmdSpill(args: ParsedArgs): number {
   const fleet = loadFleet({ config: args.config, profile: args.profile });
   const settings = pruningSettings(fleet.config);
   const out = new Output(args.json);
+  if (args.positionals[0] === "query") {
+    const view = queryResult(fileSpillStore(settings.spillDir), {
+      ref: args.positionals[1],
+      select: args.select,
+      within: args.within,
+      query: args.query,
+      cursor: args.cursor,
+      maxBytes: args.maxBytes,
+    });
+    out.emit(view, () => JSON.stringify(view, null, 2));
+    return view.ok ? EXIT_OK : EXIT_FAILURE;
+  }
   // `parseArgs` consumes `--older-than` wherever it stands, so it is handed
   // back here; `runSpillCommand` keeps reading it too, for a caller who
   // escapes the whole subcommand behind `--`.

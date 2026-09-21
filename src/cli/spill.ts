@@ -32,6 +32,7 @@ import { UsageError } from "./errors.js";
 export interface SpillStore {
   /** Store one text, return its digest. */
   put(bytes: string): string;
+  linkDerived?(digest: string, sourceRef: string): void;
   /** Return a stored text, or null when nothing is stored under that digest. */
   get(digest: string): string | null;
   /** The file a digest lives in, whether or not it is stored yet. */
@@ -115,6 +116,12 @@ export function fileSpillStore(dir: string): SpillStore {
       return digest;
     },
 
+    linkDerived(digest: string, sourceRef: string): void {
+      if (!/^[0-9a-f]{64}$/.test(digest) || !/^[0-9a-f]{64}$/.test(sourceRef)) return;
+      const file = join(dir, `${digest}.${sourceRef}.derived.json`);
+      if (!existsSync(file))
+        writeFileSync(file, JSON.stringify({ kind: "derived", sourceRef, digest }), "utf8");
+    },
     get(digest: string): string | null {
       const full = resolveDigest(dir, digest);
       if (full === null) return null;
@@ -138,6 +145,14 @@ export function fileSpillStore(dir: string): SpillStore {
         const file = join(dir, name);
         if (statSync(file).mtimeMs < bound) {
           rmSync(file);
+          const digest = name.slice(0, -4);
+          for (const sidecar of readdirSync(dir)) {
+            if (
+              /^[0-9a-f]{64}\.[0-9a-f]{64}\.derived\.json$/.test(sidecar) &&
+              (sidecar.startsWith(`${digest}.`) || sidecar.includes(`.${digest}.`))
+            )
+              rmSync(join(dir, sidecar));
+          }
           removed++;
         }
       }

@@ -22,7 +22,7 @@ export function hostExecTool(containerRoot: string, hostRoot: string): Tool {
   return {
     name: HOST_EXEC,
     description:
-      `Run a command in a cmd.exe shell on the Windows host and return {exit, stdout, stderr}. ` +
+      `Run a legacy cmd shell request or a checked process/batch request on the Windows host. Returns streams, raw capture refs and execution status. Shell status covers only the outer shell. ` +
       `Use container paths: ${containerRoot} is the same folder as ${hostRoot} on the host, and the bridge ` +
       `rewrites that prefix in the command, in cwd, and back again in the output. ` +
       `There is no allowlist and no command filtering; narrowing is done by the mcp-cli profile blocklist. ` +
@@ -30,6 +30,34 @@ export function hostExecTool(containerRoot: string, hostRoot: string): Tool {
     inputSchema: {
       type: "object" as const,
       properties: {
+        mode: { type: "string", enum: ["shell", "process", "batch"] },
+        executable: {
+          type: "string",
+          description: "Native executable; .cmd/.bat require shell mode",
+        },
+        argv: { type: "array", items: { type: "string" } },
+        acceptedExitCodes: { type: "array", items: { type: "integer" } },
+        pathArgIndexes: { type: "array", items: { type: "integer" } },
+        steps: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              mode: { const: "process" },
+              executable: { type: "string" },
+              argv: { type: "array", items: { type: "string" } },
+              cwd: { type: "string" },
+              stdin: { type: "string" },
+              timeout: { type: "number" },
+              acceptedExitCodes: { type: "array", items: { type: "integer" } },
+              pathArgIndexes: { type: "array", items: { type: "integer" } },
+            },
+            required: ["mode", "executable", "argv"],
+          },
+          minItems: 1,
+          maxItems: 100,
+        },
+        continueOnError: { type: "boolean" },
         cmd: {
           type: "string" as const,
           description: `The command line, written with ${containerRoot} paths.`,
@@ -47,7 +75,11 @@ export function hostExecTool(containerRoot: string, hostRoot: string): Tool {
           description: "Budget in seconds. Exceeding it returns exit 124 with the partial stdout.",
         },
       },
-      required: ["cmd"],
+      oneOf: [
+        { required: ["cmd"] },
+        { required: ["mode", "executable", "argv"], properties: { mode: { const: "process" } } },
+        { required: ["mode", "steps"], properties: { mode: { const: "batch" } } },
+      ],
     },
   };
 }
@@ -68,7 +100,7 @@ export function createBridgeMcpServer(options: BridgeMcpOptions): Server {
 
   server.setRequestHandler("tools/list", async () => ({ tools: [tool] }));
 
-  server.setRequestHandler("tools/call", async (request) => {
+  server.setRequestHandler("tools/call", async (request, context) => {
     const { name, arguments: args } = request.params;
     if (name !== HOST_EXEC) {
       return {
@@ -79,7 +111,7 @@ export function createBridgeMcpServer(options: BridgeMcpOptions): Server {
       };
     }
     try {
-      const result = await execBridged(args ?? {}, options);
+      const result = await execBridged(args ?? {}, { ...options, signal: context.mcpReq.signal });
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       const message = bridgeErrorMessage(err);

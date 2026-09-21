@@ -82,6 +82,9 @@ export interface BridgeEntry {
   maxQueued?: number;
   /** Bytes of stdout and of stderr returned per command; the rest is cut. */
   maxOutputBytes?: number;
+  captureDir?: string;
+  maxCaptureBytes?: number;
+  maxCaptureTotalBytes?: number;
 }
 
 /** A bridge block with every default filled in. */
@@ -96,6 +99,9 @@ export interface BridgeSettings {
   maxActive: number;
   maxQueued: number;
   maxOutputBytes: number;
+  captureDir?: string;
+  maxCaptureBytes?: number;
+  maxCaptureTotalBytes?: number;
 }
 
 /**
@@ -706,7 +712,18 @@ function parseBridgeEntry(raw: unknown, source: string): BridgeEntry | undefined
     }
     out.authTokenEnv = entry.authTokenEnv;
   }
-  for (const key of ["maxActive", "maxQueued", "maxOutputBytes"] as const) {
+  if (entry.captureDir !== undefined) {
+    if (typeof entry.captureDir !== "string" || !entry.captureDir)
+      throw new ConfigError("bridge.captureDir must be a path");
+    out.captureDir = entry.captureDir;
+  }
+  for (const key of [
+    "maxActive",
+    "maxQueued",
+    "maxOutputBytes",
+    "maxCaptureBytes",
+    "maxCaptureTotalBytes",
+  ] as const) {
     const value = entry[key];
     if (value === undefined) continue;
     if (!Number.isInteger(value) || (value as number) <= 0) {

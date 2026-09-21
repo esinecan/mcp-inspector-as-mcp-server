@@ -16,6 +16,7 @@
  * resolves and the 18 kB does not enter the caller's context.
  */
 
+import { spillHint, pointerToken } from "./spill-hints.js";
 import type { PruneOptions } from "./prune.js";
 import type { SpillStore } from "./spill.js";
 
@@ -23,6 +24,7 @@ import type { SpillStore } from "./spill.js";
 export interface EnvelopeOptions {
   prune: PruneOptions;
   store: SpillStore;
+  sourceRef?: string;
 }
 
 /** One built envelope, before the caller adds `ok` and `lane`. */
@@ -43,8 +45,8 @@ function grouped(n: number): string {
 }
 
 /** What stands in for a string leaf the envelope withheld. */
-function marker(withheld: number, digest: string): string {
-  return `[${grouped(withheld)} bytes withheld. mcp-cli spill get ${digest}]`;
+function marker(withheld: number, digest: string, path: string): string {
+  return `[${grouped(withheld)} bytes withheld. ${spillHint(digest, path).text}]`;
 }
 
 /**
@@ -57,18 +59,19 @@ function shrink(
   leafBudget: number,
   digest: string,
   seen: WeakSet<object>,
+  path = "",
 ): { value: unknown; withheld: number } {
   if (typeof value === "string") {
     const size = byteCount(value);
     if (size <= leafBudget) return { value, withheld: 0 };
-    return { value: marker(size, digest), withheld: size };
+    return { value: marker(size, digest, path), withheld: size };
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) return { value, withheld: 0 };
     seen.add(value);
     let withheld = 0;
-    const out = value.map((item) => {
-      const r = shrink(item, leafBudget, digest, seen);
+    const out = value.map((item, index) => {
+      const r = shrink(item, leafBudget, digest, seen, `${path}/${index}`);
       withheld += r.withheld;
       return r.value;
     });
@@ -80,7 +83,7 @@ function shrink(
     let withheld = 0;
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      const r = shrink(item, leafBudget, digest, seen);
+      const r = shrink(item, leafBudget, digest, seen, `${path}/${pointerToken(key)}`);
       withheld += r.withheld;
       out[key] = r.value;
     }
@@ -128,7 +131,13 @@ export function buildEnvelope(text: string, rendered: string, opts: EnvelopeOpti
   }
 
   const digest = opts.store.put(text);
-  const { value, withheld } = shrink(parsed.value, opts.prune.headBytes, digest, new WeakSet());
+  if (opts.sourceRef) opts.store.linkDerived?.(digest, opts.sourceRef);
+  const { value, withheld } = shrink(
+    parsed.value,
+    opts.prune.headBytes,
+    opts.sourceRef ?? digest,
+    new WeakSet(),
+  );
   if (withheld === 0) {
     // Large, but with no single leaf big enough to replace. Answering whole is
     // the only honest option; the handle still says where the copy is.

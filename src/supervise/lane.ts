@@ -31,4 +31,12 @@ export interface Lane {
 }
 
 /** The daemon lane found no daemon. The executor decides what that means. */
-export class DaemonUnavailable extends Error {}
+export type FallbackReason = "config_mismatch" | "not_running";
+export class DaemonUnavailable extends Error {
+  constructor(
+    message: string,
+    readonly reason: FallbackReason = "not_running",
+  ) {
+    super(message);
+  }
+}

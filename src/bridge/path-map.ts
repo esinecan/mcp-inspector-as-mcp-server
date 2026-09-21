@@ -55,7 +55,7 @@ export class PathMap {
 
   /** Map a whole container path to its Windows spelling. */
   toHost(p: string): string {
-    if (!p.startsWith(this.containerRoot)) return p;
+    if (p !== this.containerRoot && !p.startsWith(`${this.containerRoot}/`)) return p;
     const rest = p.slice(this.containerRoot.length).replace(/\//g, "\\");
     return win32.normalize(this.hostRoot + rest);
   }

@@ -113,7 +113,7 @@ export class DaemonLane implements Lane {
     const message = answer.error ?? `daemon answered HTTP ${response.status}`;
     switch (answer.code) {
       case "config-mismatch":
-        throw new DaemonUnavailable(message);
+        throw new DaemonUnavailable(message, "config_mismatch");
       case "blocked":
         throw new BlockedError(message);
       case "usage":

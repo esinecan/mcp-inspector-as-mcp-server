@@ -136,7 +136,7 @@ describe("the handle line", () => {
     const e = encoding(uniform(20));
     const result = sampleText(e, { thresholdBytes: startBudget(e) }, store);
     const line = result.text.split("\n").find((l) => l.startsWith("... "));
-    expect(line).toBe("... 11 of 20 items withheld. mcp-cli spill get feedface0000");
+    expect(line).toBe("... 11 of 20 items withheld. mcp-cli spill query feedface0000");
   });
 
   it("sits between the kept head items and the kept tail items", () => {
@@ -297,7 +297,7 @@ describe("the shrink loop", () => {
         [
           ...lines.slice(0, 2),
           ...items.slice(0, first),
-          `... ${total - first - last} of ${total} items withheld. mcp-cli spill get ${digest}`,
+          `... ${total - first - last} of ${total} items withheld. mcp-cli spill query ${digest}`,
           ...items.slice(items.length - last),
         ].join("\n");
       while (bytes(full()) >= thresholdBytes && first + last > 2) {
@@ -366,7 +366,7 @@ describe("the render around the sample", () => {
     const { result, opts } = renderOpts(store, 1);
     const rendered = renderContent(result, opts);
     const lines = rendered.split("\n").filter((l) => l.includes("items withheld"));
-    expect(lines).toEqual([`... 18 of 20 items withheld. mcp-cli spill get ${digests[0]}`]);
+    expect(lines).toEqual([`... 18 of 20 items withheld. mcp-cli spill query ${digests[0]}`]);
     expect(puts[0]).toBe(encoding(uniform(20)).text);
   });
 
@@ -377,10 +377,10 @@ describe("the render around the sample", () => {
     // Two handle lines, two digests, and each names exactly what its own store
     // entry holds: the first the lossless encoding, the second the sampled text.
     const itemLine = rendered.match(
-      /^\.\.\. \d+ of \d+ items withheld\. mcp-cli spill get ([0-9a-f]+)$/m,
+      /^\.\.\. \d+ of \d+ items withheld\. mcp-cli spill query ([0-9a-f]+)$/m,
     );
     const byteLine = rendered.match(
-      /^\.\.\. [0-9,]+ more bytes withheld\. mcp-cli spill get ([0-9a-f]+)$/m,
+      /^\.\.\. [0-9,]+ more bytes withheld\. mcp-cli spill query ([0-9a-f]+)$/m,
     );
     expect(itemLine?.[1]).toBe(digests[0]);
     expect(byteLine?.[1]).toBe(digests[1]);
@@ -388,7 +388,7 @@ describe("the render around the sample", () => {
     const lossless = encoding(uniform(20));
     expect(puts[0]).toBe(lossless.text);
     expect(puts[0]).not.toContain("items withheld");
-    expect(puts[1]).toContain(`... 18 of 20 items withheld. mcp-cli spill get ${digests[0]}`);
+    expect(puts[1]).toContain(`... 18 of 20 items withheld. mcp-cli spill query ${digests[0]}`);
     expect(puts[1]).toContain(itemLines(lossless)[0]);
     expect(puts[1]).not.toContain(itemLines(lossless)[6]);
     expect(notes.join("\n")).toContain("sample kept");
@@ -571,7 +571,7 @@ describe("payloads with no table to sample", () => {
     const e = encoding(rows);
     const keptCount = Number(notes[0]?.match(/sample kept (\d+) of 30/)?.[1] ?? 0);
     expect(out.split("\n")[0]).toBe("| signal | uid | pad |");
-    expect(out).toContain("items withheld. mcp-cli spill get a1b2c3d4e5f6");
+    expect(out).toContain("items withheld. mcp-cli spill query a1b2c3d4e5f6");
     expect(notes).toHaveLength(1);
     expect(keptCount).toBeGreaterThan(2);
     expect(bytes(out)).toBeLessThan(700);
@@ -588,7 +588,7 @@ describe("content that imitates a handle line", () => {
       uid: i,
       note:
         i === 0 || i === 19
-          ? "... 99 of 99 items withheld. mcp-cli spill get deadbeefdeadbeef"
+          ? "... 99 of 99 items withheld. mcp-cli spill query deadbeefdeadbeef"
           : `plain-${i}`,
     }));
 
@@ -600,13 +600,13 @@ describe("content that imitates a handle line", () => {
     // A table row always begins with "| ", so the handle is the one line that
     // begins with "... " — and the mimicking rows survive as they were written.
     expect(lines.filter((l) => l.startsWith("... "))).toEqual([
-      "... 18 of 20 items withheld. mcp-cli spill get a1b2c3d4e5f6",
+      "... 18 of 20 items withheld. mcp-cli spill query a1b2c3d4e5f6",
     ]);
     expect(lines).toContain(
-      "| same | 0 | ... 99 of 99 items withheld. mcp-cli spill get deadbeefdeadbeef |",
+      "| same | 0 | ... 99 of 99 items withheld. mcp-cli spill query deadbeefdeadbeef |",
     );
     expect(lines).toContain(
-      "| same | 19 | ... 99 of 99 items withheld. mcp-cli spill get deadbeefdeadbeef |",
+      "| same | 19 | ... 99 of 99 items withheld. mcp-cli spill query deadbeefdeadbeef |",
     );
   });
 
@@ -637,7 +637,7 @@ describe("the keep-set that cannot fit", () => {
     const lines = r.text.split("\n");
     expect(lines.slice(0, 2)).toEqual(e.text.split("\n").slice(0, 2));
     expect(lines[2]).toBe(itemLines(e)[0]);
-    expect(lines[3]).toBe("... 18 of 20 items withheld. mcp-cli spill get a1b2c3d4e5f6");
+    expect(lines[3]).toBe("... 18 of 20 items withheld. mcp-cli spill query a1b2c3d4e5f6");
     expect(lines[4]).toBe(itemLines(e).at(-1));
     expect(bytes(r.text)).toBeGreaterThanOrEqual(200);
   });
@@ -659,14 +659,14 @@ describe("the keep-set that cannot fit", () => {
     const lines = rendered.split("\n");
     const itemHandle = lines.find((l) => l.startsWith("... ") && l.includes("items withheld"));
     const byteHandle = lines.find((l) => l.startsWith("... ") && l.includes("more bytes withheld"));
-    expect(itemHandle).toBe(`... 18 of 20 items withheld. mcp-cli spill get ${digests[0]}`);
-    expect(byteHandle).toContain(`mcp-cli spill get ${digests[1]}`);
+    expect(itemHandle).toBe(`... 18 of 20 items withheld. mcp-cli spill query ${digests[0]}`);
+    expect(byteHandle).toContain(`mcp-cli spill query ${digests[1]}`);
     // The first spill is the lossless table, whole and with no handle line in
     // it; the second is the sampled text, whose own handle names the first.
     expect(puts).toHaveLength(2);
     expect(puts[0]).toBe(encoding(rows).text);
     expect(puts[0]).not.toContain("items withheld");
-    expect(puts[1]).toContain(`... 18 of 20 items withheld. mcp-cli spill get ${digests[0]}`);
+    expect(puts[1]).toContain(`... 18 of 20 items withheld. mcp-cli spill query ${digests[0]}`);
     expect(notes.join("\n")).toContain("sample kept 2 of 20 items");
   });
 
@@ -693,7 +693,7 @@ describe("the keep-set that cannot fit", () => {
       },
     );
     expect(puts).toEqual([e.text]);
-    expect(rendered).toContain(`mcp-cli spill get ${digests[0]}`);
+    expect(rendered).toContain(`mcp-cli spill query ${digests[0]}`);
     expect(rendered).not.toContain("items withheld");
     // The head the prune prints is whole lines of the table, and the one
     // handle line names the digest of that whole table.
@@ -730,12 +730,12 @@ describe("the keep-set that cannot fit", () => {
     // the short head carries only the byte handle of that third spill; the two
     // item handles sit in the spilled join, not in the head printed.
     expect(puts).toHaveLength(3);
-    expect(puts[2]).toContain(`mcp-cli spill get ${digests[0]}`);
-    expect(puts[2]).toContain(`mcp-cli spill get ${digests[1]}`);
+    expect(puts[2]).toContain(`mcp-cli spill query ${digests[0]}`);
+    expect(puts[2]).toContain(`mcp-cli spill query ${digests[1]}`);
     const handles = rendered.split("\n").filter((l) => l.startsWith("... "));
     expect(handles).toHaveLength(1);
     expect(handles[0]).toContain("more bytes withheld");
-    expect(handles[0]).toContain(`mcp-cli spill get ${digests[2]}`);
+    expect(handles[0]).toContain(`mcp-cli spill query ${digests[2]}`);
     // The head is a byte-prefix of the spilled join, so nothing is printed the
     // spill does not hold.
     expect(puts[2].startsWith(rendered.slice(0, rendered.indexOf(handles[0])))).toBe(true);
@@ -780,7 +780,7 @@ describe("the split and the shrink", () => {
     const wanted = [
       ...e.text.split("\n").slice(0, 2),
       ...lines.slice(0, 12),
-      "... 22 of 40 items withheld. mcp-cli spill get " + "a".repeat(64),
+      "... 22 of 40 items withheld. mcp-cli spill query " + "a".repeat(64),
       ...lines.slice(-6),
     ].join("\n");
     const r = sampleText(e, { thresholdBytes: bytes(wanted) + 5 }, store);
@@ -789,7 +789,7 @@ describe("the split and the shrink", () => {
     const out = r.text.split("\n");
     expect(out.slice(2, 14)).toEqual(lines.slice(0, 12));
     expect(out.slice(-6)).toEqual(lines.slice(-6));
-    expect(out[14]).toBe("... 22 of 40 items withheld. mcp-cli spill get a1b2c3d4e5f6");
+    expect(out[14]).toBe("... 22 of 40 items withheld. mcp-cli spill query a1b2c3d4e5f6");
   });
 
   it("shrinks from the split until the render is under the budget", () => {
@@ -837,7 +837,7 @@ describe("the digest the handle names", () => {
       const r = sampleText(e, { thresholdBytes: 1 }, store);
       const digest = r.digest as string;
       expect(digest).toMatch(/^[0-9a-f]{64}$/);
-      expect(r.text).toContain(`mcp-cli spill get ${digest}`);
+      expect(r.text).toContain(`mcp-cli spill query ${digest}`);
       expect(store.resolve(digest.slice(0, 8))).toBe(digest);
       expect(store.get(digest.slice(0, 8))).toBe(e.text);
       // A prefix shorter than the store's minimum, and a digest nothing holds,
@@ -906,7 +906,7 @@ describe("the surfaces around sample", () => {
     // the note sink because the answer itself carries no handle line.
     expect(notes).toEqual([
       "sample kept 9 of 20 items; --format raw returns the original",
-      `--intent narrowed a sampled result; mcp-cli spill get ${digests[0]} reads the whole table`,
+      `--intent narrowed a sampled result; inspect with mcp-cli spill query ${digests[0]}`,
     ]);
     expect(rendered).toContain("| 0 | uid-19 | 19 xxx");
     expect(puts).toEqual([encoding(rows).text]);
@@ -952,9 +952,9 @@ describe("--intent over a sampled result", () => {
     expect(puts).toHaveLength(1);
     expect(store.get(digests[0])).toBe(puts[0]);
     const carrier = [...rendered.split("\n"), ...notes].join("\n");
-    expect(carrier).toContain(`mcp-cli spill get ${digests[0]}`);
+    expect(carrier).toContain(`mcp-cli spill query ${digests[0]}`);
     expect(notes.join("\n")).toContain(
-      `--intent narrowed a sampled result; mcp-cli spill get ${digests[0]} reads the whole table`,
+      `--intent narrowed a sampled result; inspect with mcp-cli spill query ${digests[0]}`,
     );
   });
 

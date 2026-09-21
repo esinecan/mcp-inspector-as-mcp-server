@@ -137,7 +137,7 @@ describe("the pruning and intent wiring over a real captured result", () => {
     // The store holds the whole text, so the intent sees every chunk of it.
     expect(puts).toEqual([text]);
     expect(rendered).not.toContain("more bytes withheld");
-    expect(rendered).not.toContain("spill get");
+    expect(rendered).not.toContain("spill query");
     // "partition" first appears far past the 50-byte head, so a hit is proof
     // the search ran over the whole stored text and not over the head.
     expect(text.indexOf("partition")).toBeGreaterThan(50);
@@ -174,7 +174,7 @@ describe("the pruning and intent wiring over a real captured result", () => {
       intent: "partition",
       intentBudget: 2000,
     });
-    expect(notes.join("\n")).toContain("spill get 0123456789abcdef");
+    expect(notes.join("\n")).toContain("spill query 0123456789abcdef");
   });
 });
 

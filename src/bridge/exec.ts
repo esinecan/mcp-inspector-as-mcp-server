@@ -18,12 +18,15 @@
  * a body such as `{"cmd":"dir","cwd":5}`.
  */
 
+import { runProcess, runBatch } from "./process.js";
+import { RawCapture, type CaptureInfo, type CaptureOptions } from "./capture.js";
 import { spawn } from "child_process";
 import type { PathMap } from "./path-map.js";
 
 export interface ExecRequest {
   /** The command line, in container paths. */
   cmd: string;
+  mode?: "shell";
   /** Working directory, in container paths. Defaults to the container root. */
   cwd?: string;
   /** Text written to the child's stdin. */
@@ -32,7 +35,19 @@ export interface ExecRequest {
   timeout?: number;
 }
 
+export interface ExecutionStatus {
+  status: "succeeded" | "failed" | "spawn_error" | "timeout" | "cancelled" | "signalled";
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  statusScope: "process" | "shell" | "batch";
+  error?: string;
+}
 export interface ExecResult {
+  execution?: ExecutionStatus;
+  capture?: { stdout: CaptureInfo; stderr: CaptureInfo };
+  steps?: ExecResult[];
+  skipped?: number;
   /** The child's exit code, or 124 when the budget ran out. */
   exit: number;
   stdout: string;
@@ -41,7 +56,8 @@ export interface ExecResult {
   truncated?: { stdout: number; stderr: number };
 }
 
-export interface ExecOptions {
+export interface ExecOptions extends CaptureOptions {
+  signal?: AbortSignal;
   pathMap: PathMap;
   /** Used when the request names no timeout. */
   defaultTimeoutS?: number;
@@ -94,6 +110,13 @@ function checkRequest(raw: unknown, defaultTimeoutS: number, maxTimeoutS: number
     throw new BridgeExecError("request must be a JSON object");
   }
   const req = raw as Record<string, unknown>;
+  if (
+    (req.mode !== undefined && req.mode !== "shell") ||
+    req.executable !== undefined ||
+    req.argv !== undefined ||
+    req.steps !== undefined
+  )
+    throw new BridgeExecError("Choose one command representation");
 
   if (typeof req.cmd !== "string" || req.cmd.length === 0) {
     throw new BridgeExecError("cmd is required and must be a non-empty string");
@@ -129,14 +152,14 @@ function checkRequest(raw: unknown, defaultTimeoutS: number, maxTimeoutS: number
  * leaves a grandchild behind. This branch is written from the documented
  * semantics and is not exercised on the Windows host the bridge serves.
  */
-function killTree(pid: number | undefined): void {
+export function killTree(pid: number | undefined): void {
   if (pid === undefined) return;
   if (process.platform === "win32") {
     try {
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" }).on(
-        "error",
-        () => {},
-      );
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      }).on("error", () => {});
     } catch {
       /* the process is already gone */
     }
@@ -197,6 +220,9 @@ class Capture {
  * a wire; see `checkRequest`. Every failure is a rejection, never a throw.
  */
 export function execBridged(req: unknown, options: ExecOptions): Promise<ExecResult> {
+  const mode = (req as { mode?: string } | null)?.mode;
+  if (mode === "process") return runProcess(req, options);
+  if (mode === "batch") return runBatch(req, options);
   const { pathMap } = options;
 
   let checked: CheckedRequest;
@@ -232,13 +258,21 @@ export function execBridged(req: unknown, options: ExecOptions): Promise<ExecRes
     }
 
     const cap = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    const rawOut = new RawCapture("stdout", options);
+    const rawErr = new RawCapture("stderr", options);
     const out = new Capture(cap);
     const err = new Capture(cap);
     let settled = false;
     let timedOut = false;
 
-    child.stdout?.on("data", (c: Buffer) => out.push(c));
-    child.stderr?.on("data", (c: Buffer) => err.push(c));
+    child.stdout?.on("data", (c: Buffer) => {
+      rawOut.push(c);
+      out.push(c);
+    });
+    child.stderr?.on("data", (c: Buffer) => {
+      rawErr.push(c);
+      err.push(c);
+    });
 
     /** The result with the cut counted, when there was one. */
     const withTruncation = (result: ExecResult): ExecResult => {
@@ -257,6 +291,7 @@ export function execBridged(req: unknown, options: ExecOptions): Promise<ExecRes
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      result.capture = { stdout: rawOut.finish(), stderr: rawErr.finish() };
       resolve(result);
     };
 
@@ -264,15 +299,24 @@ export function execBridged(req: unknown, options: ExecOptions): Promise<ExecRes
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      rawOut.finish();
+      rawErr.finish();
       reject(new BridgeExecError(e.message));
     });
 
-    child.on("close", (code: number | null) => {
+    child.on("close", (code: number | null, signal: string | null) => {
       if (timedOut) {
         // The partial output is worth keeping; the caller learns why it stopped
         // from stderr, which replaces whatever the child had written.
         finish(
           withTruncation({
+            execution: {
+              status: "timeout",
+              exitCode: code,
+              signal,
+              timedOut,
+              statusScope: "shell",
+            },
             exit: TIMEOUT_EXIT,
             stdout: pathMap.toContainer(out.text()),
             stderr: `timeout after ${timeoutS}s`,
@@ -282,6 +326,13 @@ export function execBridged(req: unknown, options: ExecOptions): Promise<ExecRes
       }
       finish(
         withTruncation({
+          execution: {
+            status: signal ? "signalled" : code === 0 ? "succeeded" : "failed",
+            exitCode: code,
+            signal,
+            timedOut,
+            statusScope: "shell",
+          },
           exit: code ?? 1,
           stdout: pathMap.toContainer(out.text()),
           stderr: pathMap.toContainer(err.text()),

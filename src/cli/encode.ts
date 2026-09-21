@@ -22,6 +22,7 @@ export type Format = "raw" | "compact" | "table" | "sample";
  */
 export interface EncodeEnv {
   thresholdBytes: number;
+  sourceRef?: string;
   store: SpillStore;
 }
 
@@ -182,7 +183,7 @@ export function reencode(
     const lossless = toTable(rows);
     const sampled = sampleText(
       { text: lossless, items: rows },
-      { thresholdBytes: env.thresholdBytes },
+      { thresholdBytes: env.thresholdBytes, sourceRef: env.sourceRef },
       env.store,
     );
     if (sampled.refused !== undefined) {

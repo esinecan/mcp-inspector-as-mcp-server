@@ -63,13 +63,19 @@ describe("the host_exec tool definition", () => {
   const tool = hostExecTool("/workspace", "C:\\Users\\test\\agent-workspace");
 
   it("requires cmd and offers cwd, stdin and timeout", () => {
-    expect(tool.inputSchema.required).toEqual(["cmd"]);
-    expect(Object.keys(tool.inputSchema.properties ?? {})).toEqual([
-      "cmd",
-      "cwd",
-      "stdin",
-      "timeout",
-    ]);
+    expect(tool.inputSchema.oneOf).toEqual(expect.arrayContaining([{ required: ["cmd"] }]));
+    expect(Object.keys(tool.inputSchema.properties ?? {})).toEqual(
+      expect.arrayContaining([
+        "cmd",
+        "cwd",
+        "stdin",
+        "timeout",
+        "mode",
+        "executable",
+        "argv",
+        "steps",
+      ]),
+    );
   });
 
   it("states the path contract in the description", () => {

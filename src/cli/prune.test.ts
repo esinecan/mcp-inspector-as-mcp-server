@@ -85,26 +85,28 @@ describe("the head cut", () => {
       { thresholdBytes: 31, headBytes: 15 },
       store,
     );
-    expect(result.text).toBe("aaaaaaaaaa\n... 21 more bytes withheld. mcp-cli spill get a1b2c3d4");
+    expect(result.text).toBe(
+      "aaaaaaaaaa\n... 21 more bytes withheld. mcp-cli spill query a1b2c3d4",
+    );
   });
 
   it("keeps a line that ends exactly at the bound", () => {
     const { store } = fakeStore();
     const result = pruneText("aaa\nbbbb\n", { thresholdBytes: 9, headBytes: 4 }, store);
-    expect(result.text).toBe("aaa\n... 5 more bytes withheld. mcp-cli spill get a1b2c3d4");
+    expect(result.text).toBe("aaa\n... 5 more bytes withheld. mcp-cli spill query a1b2c3d4");
   });
 
   it("keeps a multi-byte character whole at the bound instead of cutting through it", () => {
     const { store } = fakeStore();
     const result = pruneText("ab😀\ncd\n", { thresholdBytes: 10, headBytes: 7 }, store);
-    expect(result.text).toBe("ab😀\n... 3 more bytes withheld. mcp-cli spill get a1b2c3d4");
+    expect(result.text).toBe("ab😀\n... 3 more bytes withheld. mcp-cli spill query a1b2c3d4");
   });
 
   it("emits no head at all when the bound falls before the first newline", () => {
     const { store, puts } = fakeStore();
     const text = "line one\nline two\n";
     const result = pruneText(text, { thresholdBytes: 18, headBytes: 8 }, store);
-    expect(result.text).toBe("... 18 more bytes withheld. mcp-cli spill get a1b2c3d4");
+    expect(result.text).toBe("... 18 more bytes withheld. mcp-cli spill query a1b2c3d4");
     expect(puts).toEqual([text]);
   });
 
@@ -122,14 +124,14 @@ describe("the handle line", () => {
   it("states the withheld bytes and the retrieval command carrying the digest", () => {
     const { store } = fakeStore();
     const result = pruneText("line one\nline two\n", { thresholdBytes: 18, headBytes: 9 }, store);
-    expect(result.text).toBe("line one\n... 9 more bytes withheld. mcp-cli spill get a1b2c3d4");
+    expect(result.text).toBe("line one\n... 9 more bytes withheld. mcp-cli spill query a1b2c3d4");
   });
 
   it("carries the digest the store returned, whatever that store says it is", () => {
     const { store } = fakeStore("feedface0000");
     const result = pruneText("line one\nline two\n", { thresholdBytes: 18, headBytes: 9 }, store);
     expect(result.digest).toBe("feedface0000");
-    expect(result.text).toContain("mcp-cli spill get feedface0000");
+    expect(result.text).toContain("mcp-cli spill query feedface0000");
   });
 
   it("groups the withheld count the way a person reads it", () => {
@@ -139,7 +141,7 @@ describe("the handle line", () => {
       { thresholdBytes: 3005, headBytes: 5 },
       store,
     );
-    expect(result.text).toBe("head\n... 3,000 more bytes withheld. mcp-cli spill get a1b2c3d4");
+    expect(result.text).toBe("head\n... 3,000 more bytes withheld. mcp-cli spill query a1b2c3d4");
   });
 
   it("reports exactly the bytes that were withheld: original minus emitted", () => {
@@ -165,7 +167,7 @@ describe("the golden capture", () => {
     expect(result.original, message).toBe(FIXTURE_BYTES);
     expect(result.emitted, message).toBeLessThan(result.original);
     // The handle opens its own line, so the head ended on a newline, never mid-line.
-    expect(result.text).toMatch(/\n\.\.\. [0-9,]+ more bytes withheld\. mcp-cli spill get /);
+    expect(result.text).toMatch(/\n\.\.\. [0-9,]+ more bytes withheld\. mcp-cli spill query /);
   });
 
   it("leaves the real capture whole under the verbatim shipped defaults, it is under their threshold", () => {

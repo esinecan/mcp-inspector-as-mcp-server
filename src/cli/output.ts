@@ -8,6 +8,7 @@
  * testable without touching the process streams.
  */
 
+import { spillHint } from "./spill-hints.js";
 import type { PruneOptions } from "./prune.js";
 import type { SpillStore } from "./spill.js";
 import type { Format } from "./encode.js";
@@ -94,6 +95,7 @@ export interface RenderOptions {
    * is, head and handle and all.
    */
   intent?: string;
+  sourceRef?: string;
   /** How much an `--intent` answer may be, from `pruning.intentBudget`. */
   intentBudget?: number;
 }
@@ -125,6 +127,7 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
         }
         const encoded = reencode(block.text, opts.format, opts.note, {
           thresholdBytes: opts.prune.thresholdBytes,
+          sourceRef: opts.sourceRef,
           store: opts.store,
         });
         if (typeof encoded === "string") {
@@ -147,19 +150,19 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
     }
     const joined = printed.join("\n");
     if (!opts) return joined;
-    const pruned = pruneText(joined, opts.prune, opts.store);
+    const pruned = pruneText(joined, { ...opts.prune, sourceRef: opts.sourceRef }, opts.store);
     if (opts.intent === undefined) return pruned.text;
     // The answer the intent returns carries no handle line, so every digest
     // the render created is noted instead: the addressability the handles
     // carried has to survive the narrowing, on the note sink.
     if (pruned.digest !== undefined) {
       opts.note(
-        `--intent narrowed a spilled result; mcp-cli spill get ${pruned.digest} reads it whole`,
+        `--intent narrowed a spilled result; inspect with ${spillHint(opts.sourceRef ?? pruned.digest).text}`,
       );
     }
     for (const digest of sampled) {
       opts.note(
-        `--intent narrowed a sampled result; mcp-cli spill get ${digest} reads the whole table`,
+        `--intent narrowed a sampled result; inspect with ${spillHint(opts.sourceRef ?? digest).text}`,
       );
     }
     return searchStored(widest.join("\n"), opts.intent, {

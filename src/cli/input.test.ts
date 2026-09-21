@@ -91,13 +91,13 @@ describe("--args-file", () => {
 });
 
 describe("a dropped @ sigil", () => {
-  const exists = (path: string): boolean => path === "C:\tmp\args.json";
+  const exists = (path: string): boolean => path === "C:\\tmp\\args.json";
 
   it("says the text is a file, because that is what a dropped sigil looks like", () => {
     // PowerShell's @("$p") evaluates to the bare path, so the path arrives
     // where JSON was expected and "Unexpected token 'C'" explains nothing.
-    expect(() => parseArguments("C:\tmp\args.json", "C:\tmp\args.json", exists)).toThrow(
-      /is a file that exists\. To read the arguments from it: --args-file C:\tmp\args\.json/,
+    expect(() => parseArguments("C:\\tmp\\args.json", "C:\\tmp\\args.json", exists)).toThrow(
+      /is a file that exists\. To read the arguments from it: --args-file C:\\tmp\\args\.json/,
     );
   });
 
@@ -106,7 +106,7 @@ describe("a dropped @ sigil", () => {
   });
 
   it("keeps the plain JSON error when the caller passed no spec", () => {
-    expect(() => parseArguments("C:\tmp\args.json")).toThrow(/Arguments are not valid JSON:/);
+    expect(() => parseArguments("C:\\tmp\\args.json")).toThrow(/Arguments are not valid JSON:/);
   });
 
   it("never asks the file system about a large payload", () => {

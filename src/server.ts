@@ -18,6 +18,7 @@ import {
   listPrompts,
   getPrompt,
 } from "./client.js";
+import { resultQueryTool, runResultQuery } from "./cli/result-query-mcp.js";
 import { TransportConfig, TransportType, NegotiationMode } from "./transport.js";
 import { sessionRegistry } from "./session.js";
 import type { EventType } from "./events.js";
@@ -284,6 +285,7 @@ function extractConfig(args: Record<string, unknown>): TransportConfig {
  * Handle tool calls
  */
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
+  if (name === "result_query") return runResultQuery(args);
   const config = extractConfig(args);
   const sessionId = args.session_id as string | undefined;
 
@@ -523,7 +525,7 @@ async function main(): Promise<void> {
   // v2: the low-level `Server` registers spec handlers by method string.
   // The v1 zod request-schema objects (ListToolsRequestSchema etc.) are gone.
   server.setRequestHandler("tools/list", async () => ({
-    tools: TOOLS,
+    tools: [...TOOLS, resultQueryTool],
   }));
 
   server.setRequestHandler("tools/call", async (request) => {
@@ -552,7 +554,12 @@ async function main(): Promise<void> {
         }
       }
 
-      return { content };
+      return {
+        content,
+        ...(name === "result_query" && (result as { isError?: boolean }).isError
+          ? { isError: true }
+          : {}),
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[mcp-inspector] Error: ${message}`);

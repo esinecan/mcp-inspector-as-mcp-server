@@ -47,7 +47,9 @@ describe("buildEnvelope", () => {
     const out = buildEnvelope(text, "head...", { prune: PRUNE, store: s });
     const result = out.result as { record: { updated: string; body: string } };
     expect(result.record.updated).toBe("2026-09-06");
-    expect(result.record.body).toBe(`[30,000 bytes withheld. mcp-cli spill get ${"d".repeat(64)}]`);
+    expect(result.record.body).toBe(
+      `[30,000 bytes withheld. mcp-cli spill query ${"d".repeat(64)} --within /record/body]`,
+    );
     expect(out.withheldBytes).toBe(30_000);
     expect(out.spill).toBe("d".repeat(64));
     // The whole text is what the spill holds, so the handle reads it back.

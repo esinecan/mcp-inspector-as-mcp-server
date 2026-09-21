@@ -8,6 +8,7 @@
  */
 
 import { existsSync, readFileSync } from "fs";
+import { pruneCaptures, DEFAULT_CAPTURE_DIR } from "../bridge/capture.js";
 import { PathMap } from "../bridge/path-map.js";
 import { execBridged, type ExecOptions } from "../bridge/exec.js";
 import { formatSelftest, runSelftest } from "../bridge/selftest.js";
@@ -60,6 +61,9 @@ export function bridgeContext(settings: BridgeSettings): ExecOptions {
     defaultTimeoutS: settings.defaultTimeout,
     maxTimeoutS: settings.maxTimeout,
     maxOutputBytes: settings.maxOutputBytes,
+    captureDir: settings.captureDir,
+    maxCaptureBytes: settings.maxCaptureBytes,
+    maxCaptureTotalBytes: settings.maxCaptureTotalBytes,
   };
 }
 
@@ -91,6 +95,14 @@ export function bridgeToken(
 export async function cmdBridge(args: ParsedArgs): Promise<number> {
   const sub = args.positionals[0];
   switch (sub) {
+    case "prune-captures": {
+      if (args.olderThan === undefined)
+        throw new UsageError("prune-captures needs --older-than days");
+      const settings = loadBridgeSettings(args);
+      const removed = pruneCaptures(settings.captureDir ?? DEFAULT_CAPTURE_DIR, args.olderThan);
+      new Output(args.json).emit({ removed }, () => `pruned ${removed} captures`);
+      return 0;
+    }
     case "selftest":
       return cmdSelftest(args);
     case "exec":
@@ -116,26 +128,38 @@ function cmdSelftest(args: ParsedArgs): number {
 
 async function cmdExec(args: ParsedArgs): Promise<number> {
   const cmd = args.positionals[1];
-  if (!cmd)
+  if (!cmd && !args.requestFile)
     throw new UsageError('bridge exec needs a command, for example: bridge exec "dir /workspace"');
 
   const options = bridgeContext(loadBridgeSettings(args));
   const stdin = args.stdin === undefined ? undefined : readArgumentText(args.stdin, readStdinSync);
 
+  if (args.requestFile && (cmd || args.cwd || args.stdin || args.timeoutSeconds))
+    throw new UsageError("request-file cannot be combined with command/cwd/stdin/timeout flags");
   const result = await execBridged(
     // `--timeout` is milliseconds everywhere else and seconds here, because the
     // wire format and the Python bridge it replaces both count in seconds.
-    { cmd, cwd: args.cwd, stdin, timeout: args.timeoutSeconds },
+    args.requestFile
+      ? JSON.parse(readFileSync(args.requestFile, "utf8").replace(/^\uFEFF/, ""))
+      : { cmd, cwd: args.cwd, stdin, timeout: args.timeoutSeconds },
     options,
   );
 
   if (args.json) {
     new Output(true).emit(result, () => "");
-    return result.exit;
+    return result.execution?.statusScope !== "shell" && result.execution
+      ? result.execution.status === "succeeded"
+        ? 0
+        : result.exit || 1
+      : result.exit;
   }
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  return result.exit;
+  return result.execution?.statusScope !== "shell" && result.execution
+    ? result.execution.status === "succeeded"
+      ? 0
+      : result.exit || 1
+    : result.exit;
 }
 
 async function cmdServe(args: ParsedArgs): Promise<number> {

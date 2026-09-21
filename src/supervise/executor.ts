@@ -38,7 +38,7 @@ import {
 } from "./circuits.js";
 import { newTrace, NO_EVENTS, type EventSink, type SupervisorEvent } from "./events.js";
 import { SupervisedError, type CircuitSummary, type FailureReport } from "./errors.js";
-import { DaemonUnavailable, type Lane } from "./lane.js";
+import { DaemonUnavailable, type FallbackReason, type Lane } from "./lane.js";
 import { targetOf, type Operation, type ResultOf } from "./operation.js";
 import {
   argumentBytes,
@@ -69,6 +69,7 @@ export interface Executed<T> {
   attempts: number;
   elapsedMs: number;
   lane: string;
+  fallbackReason?: FallbackReason;
   /**
    * Set when the server answered but its answer reports a failure. The value
    * is still the server's answer, unchanged, so the caller prints it as it
@@ -90,7 +91,7 @@ export interface ExecutorDeps {
    * nowhere: the call still succeeds on the fallback, so without this the only
    * evidence that the warm lane was not used is in the event log.
    */
-  onFallback?: (reason: string) => void;
+  onFallback?: (reason: FallbackReason) => void;
   store?: StateStore;
   events?: EventSink;
   env?: NodeJS.ProcessEnv;
@@ -129,6 +130,8 @@ export class McpExecutor {
   private readonly tools = new Map<string, ToolDescriptor[]>();
   /** Once the primary lane found no daemon, every later operation skips it. */
   private daemonDown = false;
+  private fallbackReason?: FallbackReason;
+  private fallbackReported = false;
 
   constructor(private readonly deps: ExecutorDeps) {
     this.store = deps.store ?? memoryStateStore();
@@ -382,6 +385,7 @@ export class McpExecutor {
             attempts: attempt,
             elapsedMs: this.now() - run.started,
             lane: lane.name,
+            ...(this.fallbackReason ? { fallbackReason: this.fallbackReason } : {}),
           };
         }
         // The server answered, and the answer says it failed. The answer is
@@ -419,6 +423,7 @@ export class McpExecutor {
           elapsedMs: this.now() - run.started,
           lane: lane.name,
           failure: resultFailure,
+          ...(this.fallbackReason ? { fallbackReason: this.fallbackReason } : {}),
         };
       }
 
@@ -496,16 +501,20 @@ export class McpExecutor {
       l.enforcesBudget ? ctx.budgetMs + LANE_GRACE_MS : ctx.budgetMs;
     try {
       const value = await withTimeout(lane.perform(server, op, ctx), wrap(lane), `on ${server}`);
+      if (this.fallbackReason && !this.fallbackReported) {
+        this.deps.onFallback?.(this.fallbackReason);
+        this.fallbackReported = true;
+      }
       return { value, lane };
     } catch (err) {
       if (!(err instanceof DaemonUnavailable)) throw err;
       // First abandonment only: after this every operation skips the primary
       // lane, and repeating the reason on each one says nothing new.
-      if (!this.daemonDown) this.deps.onFallback?.(err.message);
       this.daemonDown = true;
+      this.fallbackReason = err.reason;
       if (rule.daemonRequired) {
         throw new DaemonRequired(
-          `${server}: no daemon is running and this server is configured daemonRequired; not launched here`,
+          `${server}: ${this.fallbackReason === "config_mismatch" ? "daemon serves a different config" : "no daemon is running"} and this server is configured daemonRequired; not launched here`,
           "Start the daemon: mcp-cli daemon start (or the mcp-cli-daemon scheduled task).",
         );
       }
@@ -516,6 +525,10 @@ export class McpExecutor {
         wrap(fallback),
         `on ${server}`,
       );
+      if (!this.fallbackReported) {
+        this.deps.onFallback?.(err.reason);
+        this.fallbackReported = true;
+      }
       return { value, lane: fallback };
     }
   }
@@ -531,7 +544,7 @@ export class McpExecutor {
   ): never {
     return refuse(
       "daemon_required",
-      `${server}: no daemon is running and this server is configured daemonRequired; not launched here`,
+      `${server}: ${this.fallbackReason === "config_mismatch" ? "daemon serves a different config" : "no daemon is running"} and this server is configured daemonRequired; not launched here`,
       {
         remediation:
           "Start the daemon: mcp-cli daemon start (or the mcp-cli-daemon scheduled task).",
