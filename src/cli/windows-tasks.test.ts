@@ -425,7 +425,10 @@ describe.runIf(onWindows)("supervisor ownership is atomic", () => {
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          `(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.CommandLine -match 'mcp-cli-tasks-race' -and $_.CommandLine -match 'index\\.js' } | Measure-Object).Count`,
+          // Only this test's node: a child of the winning supervisor whose
+          // command line names this test's own generated entry path, so a
+          // concurrent run of the same test on the host cannot be counted.
+          `$entry = [regex]::Escape('${join(dir, "root", "dist", "cli", "index.js")}'); (Get-CimInstance Win32_Process -Filter "Name='node.exe' AND ParentProcessId=${alive[0].pid}" | Where-Object { $_.CommandLine -match $entry } | Measure-Object).Count`,
         ],
         { encoding: "utf8", timeout: 60_000 },
       );
