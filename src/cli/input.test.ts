@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { ArgumentError, parseArguments, readArgumentText } from "./input.js";
+import {
+  ArgumentError,
+  callArguments,
+  pairArguments,
+  parseArguments,
+  readArgumentText,
+} from "./input.js";
 
 const noStdin = () => {
   throw new Error("stdin should not be read");
@@ -118,5 +124,54 @@ describe("a dropped @ sigil", () => {
     const big = `{${"x".repeat(5000)}`;
     expect(() => parseArguments(big, big, counted)).toThrow(/not valid JSON:/);
     expect(asked).toBe(0);
+  });
+});
+
+describe("pairArguments", () => {
+  it("keeps a --arg value as a string, split at the first equals sign", () => {
+    expect(pairArguments(["name=pi-stack", "n=3", "expr=a=b"])).toEqual({
+      name: "pi-stack",
+      n: "3",
+      expr: "a=b",
+    });
+  });
+
+  it("parses a --arg-json value and nests a dotted key", () => {
+    expect(pairArguments(["a.b=c"], ["n=3", "list=[1,2]", "flag=true"])).toEqual({
+      a: { b: "c" },
+      n: 3,
+      list: [1, 2],
+      flag: true,
+    });
+  });
+
+  it("names the key when a --arg-json value is not JSON", () => {
+    expect(() => pairArguments([], ["n=three"])).toThrow(/--arg-json n: value is not JSON/);
+  });
+
+  it("rejects a pair with no key", () => {
+    expect(() => pairArguments(["=x"])).toThrow(ArgumentError);
+    expect(() => pairArguments(["nokey"])).toThrow(/takes key=value/);
+    expect(() => pairArguments(["a..b=x"])).toThrow(ArgumentError);
+  });
+});
+
+describe("callArguments", () => {
+  it("builds from pairs when they are given", () => {
+    expect(callArguments(undefined, noStdin, { arg: ["name=pi-stack"] })).toEqual({
+      name: "pi-stack",
+    });
+  });
+
+  it("refuses pairs beside a positional or --args-file", () => {
+    expect(() => callArguments('{"a":1}', noStdin, { arg: ["a=1"] })).toThrow(/Pass one/);
+    expect(() => callArguments(undefined, noStdin, { arg: ["a=1"], argsFile: "x.json" })).toThrow(
+      /--args-file x.json both give/,
+    );
+  });
+
+  it("falls through to the JSON forms when no pair is given", () => {
+    expect(callArguments('{"a":1}', noStdin)).toEqual({ a: 1 });
+    expect(callArguments(undefined, noStdin)).toEqual({});
   });
 });

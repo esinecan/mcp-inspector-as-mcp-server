@@ -1,18 +1,100 @@
 /**
  * Tool arguments arrive as JSON in one of four forms: inline text, `-` for
  * stdin, `@path` for a file, or `--args-file <path>` for the same file without
- * the sigil. There is no key=value form, because coercing untyped pairs into a
- * JSON Schema guesses at the caller's intent.
+ * the sigil. A fifth form, `--arg key=value`, carries one string argument per
+ * flag and needs no quoting rule in any shell; `--arg-json key=<json>` carries
+ * a typed value. Neither guesses a type: `--arg n=3` is the string "3", and a
+ * number is asked for by name with `--arg-json n=3`.
  *
  * `--args-file` exists because the `@` sigil is not shell-neutral. PowerShell
  * reads a leading `@` as the array/splat operator, so `@("$path")` evaluates to
- * the bare path and the file name arrives where JSON was expected.
+ * the bare path and the file name arrives where JSON was expected. `--arg`
+ * exists because inline JSON is not shell-neutral either: Windows PowerShell
+ * 5.1 strips the double quotes from an argument it hands a native program, so
+ * `'{"name":"pi-stack"}'` arrives as `{name:pi-stack}`.
  */
 
 import { existsSync, readFileSync } from "fs";
 import { ArgumentError } from "./errors.js";
 
 export { ArgumentError } from "./errors.js";
+
+/**
+ * Build a call's arguments from `--arg` and `--arg-json` pairs.
+ *
+ * Each pair is `key=value`, split at the first `=`. A dotted key nests, so
+ * `a.b=c` is `{"a":{"b":"c"}}`; a later pair for the same key replaces the
+ * earlier one. A `--arg-json` value that is not JSON is a usage error naming
+ * the key, and so is a pair with no `=` or an empty key.
+ */
+export function pairArguments(
+  strings: string[] = [],
+  jsons: string[] = [],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const place = (key: string, value: unknown, flag: string) => {
+    const parts = key.split(".");
+    if (parts.some((p) => p === "")) {
+      throw new ArgumentError(`${flag} needs a key before "=", got "${key}="`);
+    }
+    let node = out;
+    for (const part of parts.slice(0, -1)) {
+      const next = node[part];
+      if (typeof next !== "object" || next === null || Array.isArray(next)) node[part] = {};
+      node = node[part] as Record<string, unknown>;
+    }
+    node[parts[parts.length - 1]] = value;
+  };
+  const split = (pair: string, flag: string): [string, string] => {
+    const i = pair.indexOf("=");
+    if (i <= 0) throw new ArgumentError(`${flag} takes key=value, got "${pair}"`);
+    return [pair.slice(0, i), pair.slice(i + 1)];
+  };
+  for (const pair of strings) {
+    const [key, value] = split(pair, "--arg");
+    place(key, value, "--arg");
+  }
+  for (const pair of jsons) {
+    const [key, text] = split(pair, "--arg-json");
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch (err) {
+      throw new ArgumentError(`--arg-json ${key}: value is not JSON: ${(err as Error).message}`);
+    }
+    place(key, value, "--arg-json");
+  }
+  return out;
+}
+
+/**
+ * The arguments of one call, from whichever form the caller used.
+ *
+ * `--arg`/`--arg-json` pairs, a positional spec and `--args-file` each give
+ * the whole argument object, so any two together is a usage error rather than
+ * a merge rule the caller has to remember.
+ */
+export function callArguments(
+  spec: string | undefined,
+  readStdin: () => string,
+  opts: { argsFile?: string; arg?: string[]; argJson?: string[] } = {},
+): Record<string, unknown> {
+  const pairs = (opts.arg?.length ?? 0) + (opts.argJson?.length ?? 0) > 0;
+  if (pairs) {
+    if (spec !== undefined && spec !== "") {
+      throw new ArgumentError(
+        `--arg and the argument "${spec}" both give the arguments. Pass one.`,
+      );
+    }
+    if (opts.argsFile !== undefined) {
+      throw new ArgumentError(
+        `--arg and --args-file ${opts.argsFile} both give the arguments. Pass one.`,
+      );
+    }
+    return pairArguments(opts.arg, opts.argJson);
+  }
+  return parseArguments(readArgumentText(spec, readStdin, undefined, opts.argsFile), spec);
+}
 
 /**
  * Read the raw JSON text a call argument points at.

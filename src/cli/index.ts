@@ -31,7 +31,7 @@ import {
 import { loadFleet, type Fleet } from "./fleet.js";
 import { CLIENT_VERSION, ServerError, type ToolDescriptor } from "./server-session.js";
 import { resolveAddress, splitAddress } from "./match.js";
-import { parseArguments, readArgumentText, readStdinSync } from "./input.js";
+import { callArguments, readStdinSync } from "./input.js";
 import { queryResult, sourceEnvelope } from "./result-query.js";
 import { spillHint } from "./spill-hints.js";
 import { retainSource } from "./result-source.js";
@@ -93,7 +93,9 @@ Usage:
 Arguments for call and prompt are JSON, given as inline text, as "-" to read
 stdin, as "@path" to read a file, or with --args-file <path> for the same file
 without the sigil. PowerShell reads a leading "@" as the array operator, so
---args-file is the form that needs no quoting rule.
+--args-file is the file form that needs no quoting rule. --arg key=value gives
+one string argument with no file and no quoting rule in any shell; repeat it
+for more, and use --arg-json key=<json> for a number, boolean, list or object.
 
 Global flags:
   --config <path>   config file (default ${DEFAULT_CONFIG_PATH}, env MCP_CLI_CONFIG)
@@ -110,6 +112,8 @@ Global flags:
                       spill query scope/search/page/budget (default 4096)
   --request-file <path>  structured request for bridge exec
   --args-file <path>  read a call's JSON arguments from a file, without the @ sigil
+  --arg <key=value>   one string argument, repeatable; a.b=c nests
+  --arg-json <key=json>  one typed argument, repeatable
   --limit <n>       with "search", how many rows
   --provider <name> with "search", one server instead of the route
   --port, --bind    with "bridge serve", the listening socket
@@ -468,10 +472,11 @@ async function cmdCall(args: ParsedArgs): Promise<number> {
 
   // Read the arguments before connecting, so a bad payload costs no process.
   const argSpec = args.positionals[1];
-  const rawArgs = parseArguments(
-    readArgumentText(argSpec, readStdinSync, undefined, args.argsFile),
-    argSpec,
-  );
+  const rawArgs = callArguments(argSpec, readStdinSync, {
+    argsFile: args.argsFile,
+    arg: args.arg,
+    argJson: args.argJson,
+  });
 
   let serverName: string;
   try {
@@ -805,7 +810,11 @@ async function cmdPrompt(args: ParsedArgs): Promise<number> {
   if (!split) throw new UsageError(`"${query}" is not a server.name address`);
   const serverName = ctx.fleet.resolveServer(split.server);
 
-  const raw = parseArguments(readArgumentText(args.positionals[1], readStdinSync));
+  const raw = callArguments(args.positionals[1], readStdinSync, {
+    argsFile: args.argsFile,
+    arg: args.arg,
+    argJson: args.argJson,
+  });
   const promptArgs: Record<string, string> = {};
   for (const [k, v] of Object.entries(raw)) {
     promptArgs[k] = typeof v === "string" ? v : JSON.stringify(v);

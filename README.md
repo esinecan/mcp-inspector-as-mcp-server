@@ -44,39 +44,42 @@ Add to your MCP config. While there are slight variances between different harne
 
 #### Session Management (NEW in v2.0)
 
-| Tool | Description |
-|------|-------------|
-| `insp_connect` | Establish a persistent connection to an MCP server. Returns a `session_id`. |
-| `insp_disconnect` | Close a persistent session and release resources. |
-| `insp_list_sessions` | List all active sessions with their status and idle time. |
-| `insp_read_events` | Read buffered events (notifications, traffic, errors) from a session. |
-| `insp_inject_steering` | Inject a human steering message into a session's queue. |
+| Tool                   | Description                                                                 |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `insp_connect`         | Establish a persistent connection to an MCP server. Returns a `session_id`. |
+| `insp_disconnect`      | Close a persistent session and release resources.                           |
+| `insp_list_sessions`   | List all active sessions with their status and idle time.                   |
+| `insp_read_events`     | Read buffered events (notifications, traffic, errors) from a session.       |
+| `insp_inject_steering` | Inject a human steering message into a session's queue.                     |
 
 #### Inspection Tools
 
-| Tool | Description |
-|------|-------------|
-| `insp_tools_list` | List all tools exposed by an MCP server |
-| `insp_tools_call` | Call a tool on an MCP server |
-| `insp_resources_list` | List all resources exposed by an MCP server |
-| `insp_resources_read` | Read a specific resource |
-| `insp_resources_templates` | List resource templates |
-| `insp_prompts_list` | List all prompts |
-| `insp_prompts_get` | Get a specific prompt |
+| Tool                       | Description                                 |
+| -------------------------- | ------------------------------------------- |
+| `insp_tools_list`          | List all tools exposed by an MCP server     |
+| `insp_tools_call`          | Call a tool on an MCP server                |
+| `insp_resources_list`      | List all resources exposed by an MCP server |
+| `insp_resources_read`      | Read a specific resource                    |
+| `insp_resources_templates` | List resource templates                     |
+| `insp_prompts_list`        | List all prompts                            |
+| `insp_prompts_get`         | Get a specific prompt                       |
 
 ### Connection Parameters
 
 All tools accept the following connection parameters:
 
 **For stdio transport (local commands):**
+
 - `command`: Command to run (e.g., `"node"`, `"python"`)
 - `args`: Array of arguments (e.g., `["path/to/server.js"]`)
 
 **For SSE/HTTP transport (remote servers):**
+
 - `url`: Server URL (e.g., `"http://localhost:3000/sse"`)
 - `headers`: Optional HTTP headers object
 
 **Common:**
+
 - `transport`: Force transport type (`"stdio"`, `"sse"`, or `"http"`). Auto-detected if not specified.
 - `negotiation`: Protocol era to negotiate as a client (`"legacy"`, `"auto"`, or a pinned revision). See [Protocol negotiation](#protocol-negotiation).
 - `session_id`: (Optional) Use an existing persistent session instead of creating an ephemeral connection.
@@ -134,6 +137,7 @@ The inspector enables **human-in-the-loop** workflows where you can observe and 
 ### Viewing Activity
 
 **Via LLM:** The agent can call `insp_read_events` to see what's happening:
+
 ```json
 {
   "session_id": "sess_abc123",
@@ -143,6 +147,7 @@ The inspector enables **human-in-the-loop** workflows where you can observe and 
 ```
 
 **Via HTTP:** Query the steering API directly:
+
 ```bash
 curl http://127.0.0.1:9847/api/sessions
 ```
@@ -152,12 +157,14 @@ curl http://127.0.0.1:9847/api/sessions
 Inject guidance messages that appear in the LLM's next tool response.
 
 **Using the CLI:**
+
 ```bash
 ./bin/mcp-steer.mjs "Focus on testing the error handling paths"
 ./bin/mcp-steer.mjs --session sess_abc123 "Try calling with invalid params"
 ```
 
 **Using HTTP:**
+
 ```bash
 curl -X POST http://127.0.0.1:9847/api/steer \
   -H "Content-Type: application/json" \
@@ -165,6 +172,7 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 ```
 
 **Using the MCP tool:**
+
 ```json
 {
   "tool": "insp_inject_steering",
@@ -177,13 +185,13 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 
 ### Event Types
 
-| Type | Description |
-|------|-------------|
-| `traffic_out` | Messages sent TO the target server |
-| `traffic_in` | Messages received FROM the target server |
-| `notification` | MCP notifications from the target server |
-| `error` | Errors encountered during communication |
-| `steering` | Human steering messages injected into the session |
+| Type           | Description                                       |
+| -------------- | ------------------------------------------------- |
+| `traffic_out`  | Messages sent TO the target server                |
+| `traffic_in`   | Messages received FROM the target server          |
+| `notification` | MCP notifications from the target server          |
+| `error`        | Errors encountered during communication           |
+| `steering`     | Human steering messages injected into the session |
 
 ### Typical Workflow
 
@@ -197,6 +205,7 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 ### Examples
 
 **List tools from a local MCP server (ephemeral):**
+
 ```json
 {
   "command": "node",
@@ -205,6 +214,7 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 ```
 
 **Create a persistent session:**
+
 ```json
 {
   "command": "node",
@@ -214,11 +224,12 @@ curl -X POST http://127.0.0.1:9847/api/steer \
 ```
 
 **Call a tool using a session:**
+
 ```json
 {
   "session_id": "sess_abc123",
   "tool_name": "search",
-  "tool_args": {"query": "hello"}
+  "tool_args": { "query": "hello" }
 }
 ```
 
@@ -272,16 +283,20 @@ One JSON file, by default `~/.agents/mcp-cli.json`. Override the path with
 ```json
 {
   "mcpServers": {
-    "forum":   { "command": "node", "args": ["C:/Users/you/dev/forum/index.js"] },
+    "forum": { "command": "node", "args": ["C:/Users/you/dev/forum/index.js"] },
     "gsearch": { "url": "http://127.0.0.1:8766/mcp" },
-    "remote":  { "url": "https://example.test/mcp",
-                 "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" } },
-    "hosted":  { "url": "https://mcp.example.com/mcp",
-                 "auth": { "type": "oauth", "scope": "files:read" } }
+    "remote": {
+      "url": "https://example.test/mcp",
+      "headers": { "Authorization": "Bearer ${REMOTE_TOKEN}" }
+    },
+    "hosted": {
+      "url": "https://mcp.example.com/mcp",
+      "auth": { "type": "oauth", "scope": "files:read" }
+    }
   },
   "profiles": {
     "default": { "block": [] },
-    "safe":    { "block": ["gmail.send_*", "forum.post", "linkedin.*"] },
+    "safe": { "block": ["gmail.send_*", "forum.post", "linkedin.*"] },
     "housing": { "extends": "safe", "block": ["cortex.*"] }
   },
   "auth": { "store": "dpapi", "callbackPort": 8792, "clientName": "mcp-cli" }
@@ -385,14 +400,14 @@ its parent and adds its own. A cycle is an error.
 
 A pattern is a glob over the full `server.tool` address:
 
-| Pattern | Matches |
-| --- | --- |
-| `forum.post` | that one tool |
-| `forum.*` | every tool of `forum`. `*` covers any run of characters inside one dot-separated segment |
-| `*.send_message` | a tool named `send_message` on any server |
-| `linkedin.send_*` | every `linkedin` tool whose name starts with `send_` |
-| `cortex.**` | every `cortex` address. `**` crosses dot separators as well |
-| `gmail.?end` | `?` covers exactly one character inside a segment |
+| Pattern           | Matches                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------- |
+| `forum.post`      | that one tool                                                                            |
+| `forum.*`         | every tool of `forum`. `*` covers any run of characters inside one dot-separated segment |
+| `*.send_message`  | a tool named `send_message` on any server                                                |
+| `linkedin.send_*` | every `linkedin` tool whose name starts with `send_`                                     |
+| `cortex.**`       | every `cortex` address. `**` crosses dot separators as well                              |
+| `gmail.?end`      | `?` covers exactly one character inside a segment                                        |
 
 `mcp-cli tools` hides a blocked tool. `mcp-cli tools --all` shows it and marks
 it with the profile and the pattern that blocked it. Calling a blocked tool
@@ -477,34 +492,36 @@ mcp-cli daemon start
 
 Global flags, valid on every command:
 
-| Flag | Meaning |
-| --- | --- |
-| `--config <path>` | config file to read. Also `MCP_CLI_CONFIG` |
-| `--profile <name>` | blocklist profile. Also `MCP_CLI_PROFILE` |
-| `--json` | one JSON object on stdout instead of text; a failure is the error envelope |
-| `--timeout <ms>` | total budget of one operation, queue wait included |
-| `--all` | with `tools`, also show blocked tools, marked |
-| `--schema` | with `tools`, also show each tool's argument schema |
-| `--args-file <path>` | read a call's JSON arguments from a file, without the `@` sigil |
-| `--limit <n>`, `--provider <name>` | with `search`, how many rows, and one server instead of the route |
-| `--port`, `--bind` | with `bridge serve`, the listening socket |
-| `--port` | with `daemon`, its port. Also `MCP_CLI_DAEMON_PORT` and `daemon.port`, default 8791 |
-| `--log <path>` | with `daemon serve` and `bridge serve`, append the log there |
-| `--cwd`, `--stdin` | with `bridge exec`, the working directory and standard input |
-| `--help`, `--version` | usage text, version |
+| Flag                               | Meaning                                                                             |
+| ---------------------------------- | ----------------------------------------------------------------------------------- |
+| `--config <path>`                  | config file to read. Also `MCP_CLI_CONFIG`                                          |
+| `--profile <name>`                 | blocklist profile. Also `MCP_CLI_PROFILE`                                           |
+| `--json`                           | one JSON object on stdout instead of text; a failure is the error envelope          |
+| `--timeout <ms>`                   | total budget of one operation, queue wait included                                  |
+| `--all`                            | with `tools`, also show blocked tools, marked                                       |
+| `--schema`                         | with `tools`, also show each tool's argument schema                                 |
+| `--args-file <path>`               | read a call's JSON arguments from a file, without the `@` sigil                     |
+| `--arg <key=value>`                | one string argument, repeatable; `a.b=c` nests                                      |
+| `--arg-json <key=json>`            | one typed argument, repeatable                                                      |
+| `--limit <n>`, `--provider <name>` | with `search`, how many rows, and one server instead of the route                   |
+| `--port`, `--bind`                 | with `bridge serve`, the listening socket                                           |
+| `--port`                           | with `daemon`, its port. Also `MCP_CLI_DAEMON_PORT` and `daemon.port`, default 8791 |
+| `--log <path>`                     | with `daemon serve` and `bridge serve`, append the log there                        |
+| `--cwd`, `--stdin`                 | with `bridge exec`, the working directory and standard input                        |
+| `--help`, `--version`              | usage text, version                                                                 |
 
 `import-claude` also takes `--from <path>` for the Claude Code config to read
 and `--out <path>` for the file to write.
 
 ### Exit codes
 
-| Code | Meaning |
-| --- | --- |
-| 0 | success |
-| 1 | the connection failed, or the tool returned an error result |
-| 2 | usage error: unknown command, unknown flag, unknown server, bad config file, or arguments that are not a JSON object |
-| 3 | the profile blocks this tool |
-| 4 | refused before dispatch: a circuit is open, this exact request is excluded, the queue is full, the server needs the daemon and none answers, or the arguments are over the limit |
+| Code | Meaning                                                                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success                                                                                                                                                                          |
+| 1    | the connection failed, or the tool returned an error result                                                                                                                      |
+| 2    | usage error: unknown command, unknown flag, unknown server, bad config file, or arguments that are not a JSON object                                                             |
+| 3    | the profile blocks this tool                                                                                                                                                     |
+| 4    | refused before dispatch: a circuit is open, this exact request is excluded, the queue is full, the server needs the daemon and none answers, or the arguments are over the limit |
 
 Results go to stdout. Errors and notes go to stderr, each prefixed with
 `mcp-cli: `. A whole-fleet `mcp-cli tools` exits 0 even when some servers
@@ -602,20 +619,27 @@ An unknown server name exits 2.
 
 ### Arguments
 
-Arguments are a JSON object, in one of four forms. There is no key=value form,
-because coercing untyped pairs into a JSON Schema guesses at what the caller
-meant. Omitting the argument means `{}`.
+Arguments are a JSON object, in one of five forms. Omitting the argument means
+`{}`.
 
 ```bash
 mcp-cli call forum.poll '{}'                          # inline
 echo '{"limit":1}' | mcp-cli call forum.history -     # "-" reads stdin
 mcp-cli call forum.history @args.json                 # "@path" reads a file
 mcp-cli call forum.history --args-file args.json      # the same file, no sigil
+mcp-cli call memory-store.memory_read --arg name=pi-stack   # one pair, no quoting
 ```
 
-Git Bash is the documented shell on Windows. PowerShell rewrites inline JSON
-before the process sees it, and single quotes do not protect it. In PowerShell,
-use the `-` form or `--args-file`.
+`--arg key=value` gives one argument as a string and can be repeated; a dotted
+key nests, so `--arg a.b=c` is `{"a":{"b":"c"}}`. It never guesses a type:
+`--arg n=3` is the string `"3"`. A number, boolean, list or object is asked for
+by name with `--arg-json key=<json>`, for example `--arg-json limit=3` or
+`--arg-json tags='["a","b"]'`. Pairs and a positional or `--args-file` together
+are a usage error.
+
+Git Bash is the documented shell on Windows. Windows PowerShell 5.1 strips the
+double quotes from inline JSON before the process sees it, and single quotes do
+not protect it. In PowerShell, use `--arg`, the `-` form or `--args-file`.
 
 `--args-file` exists because `@` is not shell-neutral. PowerShell reads a
 leading `@` as the array operator, so `@("$path")` evaluates to the bare path
@@ -702,13 +726,25 @@ $ mcp-cli --json call memory-store.memory_read '{"name":"pi-stack"}' | jq -r .re
 ```
 
 ```json
-{ "ok": true, "isError": false, "lane": "daemon",
-  "result": { "record": { "updated": "2026-09-06 claude",
-                          "body": "[18,432 bytes withheld. mcp-cli spill query 7f3a... --within /record/body]" } },
-  "spill": "7f3a...", "source": { "ref": "7f3a..." },
-  "next": { "command": "mcp-cli", "argv": ["spill", "query", "7f3a...", "--within", "/record/body"],
-            "text": "mcp-cli spill query 7f3a... --within /record/body" },
-  "withheldBytes": 18432 }
+{
+  "ok": true,
+  "isError": false,
+  "lane": "daemon",
+  "result": {
+    "record": {
+      "updated": "2026-09-06 claude",
+      "body": "[18,432 bytes withheld. mcp-cli spill query 7f3a... --within /record/body]"
+    }
+  },
+  "spill": "7f3a...",
+  "source": { "ref": "7f3a..." },
+  "next": {
+    "command": "mcp-cli",
+    "argv": ["spill", "query", "7f3a...", "--within", "/record/body"],
+    "text": "mcp-cli spill query 7f3a... --within /record/body"
+  },
+  "withheldBytes": 18432
+}
 ```
 
 `spill`, `source`, `next` and `withheldBytes` appear only when something was
@@ -941,6 +977,7 @@ npm run typecheck    # type-check without emitting
 ## Changelog
 
 ### Unreleased
+
 - `--json` prints one envelope for `call`, `{ok, isError, lane, result}` on success to match the failure envelope it already printed. A JSON payload arrives parsed instead of escaped inside a string, so one `jq` hop reaches a field, and an oversize result is pruned by shape rather than by text: every key survives and only a string leaf over `pruning.headBytes` is replaced, with `spill` and `withheldBytes` beside it. On a 19,390-byte memory record the envelope is 822 bytes. Every other command's `--json` output is unchanged
 - An address that resolves to nothing answers with what it could determine: the call that would have worked when one tool is within two edits, that server's whole tool list when only the server is known, and every server with the tools it last showed when neither is. The widest of the three is read from `<stateDir>/tools.json`, which every successful listing writes, so it costs 0.3 s instead of a 25 s fan-out and never dials a failing server
 - Added `--args-file <path>`: a call's JSON arguments from a file with no `@` sigil, because PowerShell reads a leading `@` as the array operator. Argument text that does not parse but does name an existing file now says so instead of reporting `Unexpected token 'C'`
@@ -961,12 +998,14 @@ npm run typecheck    # type-check without emitting
 - `insp_connect` and `insp_list_sessions` now report the negotiated protocol revision and era of each session
 
 ### v2.1.0
+
 - Added human steering (`insp_inject_steering`) for human-in-the-loop workflows
 - Added HTTP API on port 9847 for external steering/observability
 - Added `mcp-steer.mjs` CLI tool for easy human interaction
 - Fixed critical bug in `TracingTransportWrapper` where handler capture timing caused message loss
 
 ### v2.0.0
+
 - Added session management (`insp_connect`, `insp_disconnect`, `insp_list_sessions`)
 - Added event buffering (`insp_read_events`)
 - All inspection tools now support optional `session_id` for persistent connections
@@ -974,11 +1013,13 @@ npm run typecheck    # type-check without emitting
 - Backward compatible: omit `session_id` for original ephemeral behavior
 
 ### v1.0.0
+
 - Initial release with ephemeral connections
 
 ## License
 
 MIT
+
 ## Targeted retrieval and checked execution
 
 Read [the query and process guide](docs/result-query-and-process.md) for exact tool

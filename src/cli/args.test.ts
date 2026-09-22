@@ -16,6 +16,21 @@ describe("parseArgs", () => {
     expect(parseArgs(["tools", "--profile=safe"]).profile).toBe("safe");
   });
 
+  it("collects repeated --arg and --arg-json pairs in order", () => {
+    const a = parseArgs([
+      "call",
+      "x.y",
+      "--arg",
+      "name=pi-stack",
+      "--arg",
+      "a.b=c=d",
+      "--arg-json",
+      "n=3",
+    ]);
+    expect(a.arg).toEqual(["name=pi-stack", "a.b=c=d"]);
+    expect(a.argJson).toEqual(["n=3"]);
+  });
+
   it("reads the boolean flags", () => {
     const a = parseArgs(["tools", "--all", "--json"]);
     expect(a.all).toBe(true);

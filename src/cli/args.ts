@@ -50,6 +50,13 @@ export interface ParsedArgs {
    * arrives where JSON was expected.
    */
   argsFile?: string;
+  /**
+   * `--arg key=value`, repeatable: one string argument per flag, no quoting
+   * rule in any shell. Dots in the key nest: `a.b=c` is `{"a":{"b":"c"}}`.
+   */
+  arg?: string[];
+  /** `--arg-json key=<json>`, repeatable: one argument whose value is parsed as JSON. */
+  argJson?: string[];
   /** `--schema`, with "tools", also print each tool's input schema. */
   schema: boolean;
   /** `--older-than`, the age in days beyond which `spill prune` deletes. */
@@ -93,6 +100,8 @@ const VALUE_FLAGS = new Set([
   "--format",
   "--intent",
   "--args-file",
+  "--arg",
+  "--arg-json",
   "--older-than",
   "--limit",
   "--provider",
@@ -192,6 +201,12 @@ function assign(parsed: ParsedArgs, flag: string, value: string): void {
       return;
     case "--cursor":
       parsed.cursor = value;
+      return;
+    case "--arg":
+      (parsed.arg ??= []).push(value);
+      return;
+    case "--arg-json":
+      (parsed.argJson ??= []).push(value);
       return;
     case "--request-file":
       parsed.requestFile = value;
