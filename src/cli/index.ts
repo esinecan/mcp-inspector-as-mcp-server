@@ -110,6 +110,9 @@ Global flags:
   --select <pointer>  exact field, repeatable, with spill query
   --within <pointer> --query <words> --cursor <cursor> --max-bytes <n>
                       spill query scope/search/page/budget (default 4096)
+                      A pointer is record/body, /record/body or #/record/body.
+                      Under Git Bash write record/body: MSYS rewrites an
+                      argument that starts with / or #/ as a Windows path.
   --request-file <path>  structured request for bridge exec
   --args-file <path>  read a call's JSON arguments from a file, without the @ sigil
   --arg <key=value>   one string argument, repeatable; a.b=c nests

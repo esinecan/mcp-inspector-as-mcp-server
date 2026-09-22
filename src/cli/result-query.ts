@@ -35,10 +35,32 @@ export const serializedBytes = (v: unknown) => Buffer.byteLength(JSON.stringify(
 const hash = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 const words = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}_-]+/gu) ?? [];
 
-function pointer(root: unknown, path: string): { found: boolean; value?: unknown } {
+/**
+ * The RFC 6901 form of a pointer a caller typed.
+ *
+ * Three spellings name one field: `/record/body`, the URI-fragment form
+ * `#/record/body`, and `record/body` with no leading slash. The last exists
+ * because Git Bash (MSYS) rewrites an argument that starts with `/`, or with
+ * `#/`, as a Windows path before the CLI sees it, so `/record/body` arrives
+ * as `C:/Program Files/Git/record/body`. The empty string stays the root.
+ */
+export function canonicalPointer(path: string): string {
+  const bare = path.startsWith("#") ? path.slice(1) : path;
+  if (/^[A-Za-z]:[\\/]/.test(bare)) {
+    // What MSYS made of `/record/body`: a drive path the caller never typed.
+    throw new UsageError(
+      `Pointer "${path}" is a Windows path, so the shell rewrote it. ` +
+        "Under Git Bash write the pointer without its leading slash, for example record/body",
+    );
+  }
+  if (bare === "" || bare.startsWith("/")) return bare;
+  return `/${bare}`;
+}
+
+function pointer(root: unknown, rawPath: string): { found: boolean; value?: unknown } {
+  const path = canonicalPointer(rawPath);
   if (path === "") return { found: true, value: root };
-  if (!path.startsWith("/") || /~(?![01])/u.test(path))
-    throw new UsageError("Invalid JSON Pointer");
+  if (/~(?![01])/u.test(path)) throw new UsageError("Invalid JSON Pointer");
   let value = root;
   for (const encoded of path.slice(1).split("/")) {
     const key = encoded.replace(/~1/g, "/").replace(/~0/g, "~");
@@ -195,6 +217,9 @@ function validate(raw: unknown): QueryRequest {
     throw new UsageError("select must contain at most 128 JSON Pointers");
   if (r.query !== undefined && !r.query.trim())
     throw new UsageError("query must not be empty; omit it for an outline");
+  // Every later comparison and hint works on the one canonical spelling.
+  if (r.within !== undefined) r.within = canonicalPointer(r.within);
+  if (r.select !== undefined) r.select = r.select.map(canonicalPointer);
   if (
     r.maxBytes !== undefined &&
     (!Number.isSafeInteger(r.maxBytes) || r.maxBytes < 1024 || r.maxBytes > 1048576)

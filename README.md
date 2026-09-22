@@ -733,15 +733,15 @@ $ mcp-cli --json call memory-store.memory_read '{"name":"pi-stack"}' | jq -r .re
   "result": {
     "record": {
       "updated": "2026-09-06 claude",
-      "body": "[18,432 bytes withheld. mcp-cli spill query 7f3a... --within /record/body]"
+      "body": "[18,432 bytes withheld. mcp-cli spill query 7f3a... --within record/body]"
     }
   },
   "spill": "7f3a...",
   "source": { "ref": "7f3a..." },
   "next": {
     "command": "mcp-cli",
-    "argv": ["spill", "query", "7f3a...", "--within", "/record/body"],
-    "text": "mcp-cli spill query 7f3a... --within /record/body"
+    "argv": ["spill", "query", "7f3a...", "--within", "record/body"],
+    "text": "mcp-cli spill query 7f3a... --within record/body"
   },
   "withheldBytes": 18432
 }
@@ -750,7 +750,13 @@ $ mcp-cli --json call memory-store.memory_read '{"name":"pi-stack"}' | jq -r .re
 `spill`, `source`, `next` and `withheldBytes` appear only when something was
 withheld, and they name one ref. `next` is the command that reaches the first
 withheld field: `spill query <ref> --within <pointer>` prints its outline, and
-`--query "<words>"` or `--select <pointer>` narrow it further.
+`--query "<words>"` or `--select <pointer>` narrow it further. A pointer is
+written `record/body`, `/record/body` or `#/record/body`; the three are one
+pointer. Hints use the first spelling because Git Bash (MSYS) rewrites an
+argument that starts with `/`, and one that starts with `#/`, as a Windows
+path before the CLI sees it; cmd.exe and PowerShell pass every spelling
+through. When a rewritten path does arrive, the CLI says so and names the
+slash-free spelling.
 `mcp-cli spill get <ref>` returns the whole result byte for byte. On that
 record the envelope is 822 bytes where the whole payload is 19,390.
 

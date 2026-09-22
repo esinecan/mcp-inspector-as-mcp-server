@@ -48,7 +48,7 @@ describe("buildEnvelope", () => {
     const result = out.result as { record: { updated: string; body: string } };
     expect(result.record.updated).toBe("2026-09-06");
     expect(result.record.body).toBe(
-      `[30,000 bytes withheld. mcp-cli spill query ${"d".repeat(64)} --within /record/body]`,
+      `[30,000 bytes withheld. mcp-cli spill query ${"d".repeat(64)} --within record/body]`,
     );
     expect(out.withheldBytes).toBe(30_000);
     expect(out.spill).toBe("d".repeat(64));
@@ -64,7 +64,7 @@ describe("buildEnvelope", () => {
     expect(out.spill).toBe(sourceRef);
     expect(out.withheldPath).toBe("/record/body");
     const body = (out.result as { record: { body: string } }).record.body;
-    expect(body).toContain(`spill query ${sourceRef} --within /record/body`);
+    expect(body).toContain(`spill query ${sourceRef} --within record/body`);
     expect(body).not.toContain("d".repeat(64));
   });
 

@@ -78,6 +78,24 @@ describe("retained result query contract", () => {
     expect(page2.result.total).toBe(page1.result.total);
     expect(page1.result.total).toBe(q.result.total);
   });
+  it("reads the three pointer spellings as one pointer and hints the slash-free one", () => {
+    const ref = source({ record: { name: "pi-stack", body: "# H\nneedle here\n" } });
+    const values = ["/record/name", "#/record/name", "record/name"].map(
+      (p) => queryResult(store, { ref, select: [p] }).result.items[0],
+    );
+    expect(values.map((v) => v.value)).toEqual(["pi-stack", "pi-stack", "pi-stack"]);
+    expect(values.map((v) => v.path)).toEqual(["/record/name", "/record/name", "/record/name"]);
+    for (const within of ["/record/body", "#/record/body", "record/body"]) {
+      const q = queryResult(store, { ref, within, query: "needle" });
+      expect(q.result.items[0].path).toBe("/record/body");
+      expect(q.next.argv).toEqual(["spill", "query", ref, "--within", "record/body"]);
+    }
+    expect(() => queryResult(store, { ref, select: ["record/bad~2"] })).toThrow(/Pointer/);
+    // What Git Bash hands over for /record/body: the CLI names the rewrite and the fix.
+    expect(() => queryResult(store, { ref, within: "C:/Program Files/Git/record/body" })).toThrow(
+      /Windows path.*without its leading slash/,
+    );
+  });
   it("distinguishes null, missing and a deferred selection", () => {
     const ref = source({ present: null, large: "x".repeat(10000), "~/": 0 });
     const q = queryResult(store, { ref, select: ["/present", "/absent", "/large", "/~0~1"] });

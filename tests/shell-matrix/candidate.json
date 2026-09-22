@@ -1,6 +1,6 @@
 {
   "label": "candidate",
-  "when": "2026-09-22T00:11:08.251Z",
+  "when": "2026-09-22T00:19:48.103Z",
   "node": "v24.11.1",
   "cli": "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js",
   "shells": {
@@ -36,7 +36,7 @@
           ],
           "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" --json call frozen.read --args-file \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json\"",
           "exit": 0,
-          "stdout_bytes": 1271,
+          "stdout_bytes": 1268,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
@@ -54,7 +54,7 @@
           ],
           "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" --json call frozen.read --arg name=pi-stack",
           "exit": 0,
-          "stdout_bytes": 1271,
+          "stdout_bytes": 1268,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
@@ -74,9 +74,9 @@
           ],
           "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within /record/body --query \"pi 0.85.1\"",
           "exit": 0,
-          "stdout_bytes": 3532,
+          "stdout_bytes": 3531,
           "stderr_bytes": 0,
-          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
           "stderr_head": "",
           "pass": true,
           "note": "total=38 items=3 midWordCuts=0"
@@ -94,9 +94,9 @@
               ],
               "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within /record/body",
               "exit": 0,
-              "stdout_bytes": 1805,
+              "stdout_bytes": 1804,
               "stderr_bytes": 0,
-              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
               "stderr_head": "",
               "form": "/record/body",
               "pass": true,
@@ -111,14 +111,14 @@
                 "record/body"
               ],
               "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within record/body",
-              "exit": 2,
-              "stdout_bytes": 0,
-              "stderr_bytes": 30,
-              "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "exit": 0,
+              "stdout_bytes": 1804,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
+              "stderr_head": "",
               "form": "record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "note": "outline"
             },
             {
               "argv": [
@@ -129,18 +129,18 @@
                 "#/record/body"
               ],
               "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" spill query 5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324 --within #/record/body",
-              "exit": 2,
-              "stdout_bytes": 0,
-              "stderr_bytes": 30,
-              "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "exit": 0,
+              "stdout_bytes": 1804,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
+              "stderr_head": "",
               "form": "#/record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "note": "outline"
             }
           ],
-          "pass": false,
-          "note": "/record/body:ok | record/body:mcp-cli: Invalid JSON Pointer\n | #/record/body:mcp-cli: Invalid JSON Pointer\n"
+          "pass": true,
+          "note": "/record/body:ok | record/body:ok | #/record/body:ok"
         }
       }
     },
@@ -176,7 +176,7 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json'",
           "exit": 0,
-          "stdout_bytes": 1271,
+          "stdout_bytes": 1268,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
@@ -194,7 +194,7 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--arg' 'name=pi-stack'",
           "exit": 0,
-          "stdout_bytes": 1271,
+          "stdout_bytes": 1268,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
@@ -214,9 +214,9 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '/record/body' '--query' 'pi 0.85.1'",
           "exit": 0,
-          "stdout_bytes": 3532,
+          "stdout_bytes": 3531,
           "stderr_bytes": 0,
-          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
           "stderr_head": "",
           "pass": true,
           "note": "total=38 items=3 midWordCuts=0"
@@ -234,9 +234,9 @@
               ],
               "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '/record/body'",
               "exit": 0,
-              "stdout_bytes": 1805,
+              "stdout_bytes": 1804,
               "stderr_bytes": 0,
-              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"/record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\":",
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
               "stderr_head": "",
               "form": "/record/body",
               "pass": true,
@@ -251,14 +251,14 @@
                 "record/body"
               ],
               "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' 'record/body'",
-              "exit": 2,
-              "stdout_bytes": 0,
-              "stderr_bytes": 30,
-              "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "exit": 0,
+              "stdout_bytes": 1804,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
+              "stderr_head": "",
               "form": "record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "note": "outline"
             },
             {
               "argv": [
@@ -269,18 +269,18 @@
                 "#/record/body"
               ],
               "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '#/record/body'",
-              "exit": 2,
-              "stdout_bytes": 0,
-              "stderr_bytes": 30,
-              "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "exit": 0,
+              "stdout_bytes": 1804,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
+              "stderr_head": "",
               "form": "#/record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "note": "outline"
             }
           ],
-          "pass": false,
-          "note": "/record/body:ok | record/body:mcp-cli: Invalid JSON Pointer\n | #/record/body:mcp-cli: Invalid JSON Pointer\n"
+          "pass": true,
+          "note": "/record/body:ok | record/body:ok | #/record/body:ok"
         }
       }
     },
@@ -316,7 +316,7 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json'",
           "exit": 0,
-          "stdout_bytes": 1271,
+          "stdout_bytes": 1268,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
@@ -334,7 +334,7 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--arg' 'name=pi-stack'",
           "exit": 0,
-          "stdout_bytes": 1271,
+          "stdout_bytes": 1268,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
@@ -353,13 +353,13 @@
             "pi 0.85.1"
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' 'record/body' '--query' 'pi 0.85.1'",
-          "exit": 2,
-          "stdout_bytes": 0,
-          "stderr_bytes": 30,
-          "stdout_head": "",
-          "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
-          "pass": false,
-          "note": "mcp-cli: Invalid JSON Pointer\n"
+          "exit": 0,
+          "stdout_bytes": 3531,
+          "stderr_bytes": 0,
+          "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
+          "stderr_head": "",
+          "pass": true,
+          "note": "total=38 items=3 midWordCuts=0"
         },
         "F5": {
           "title": "pointer aliases",
@@ -375,12 +375,13 @@
               "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '/record/body'",
               "exit": 2,
               "stdout_bytes": 0,
-              "stderr_bytes": 30,
+              "stderr_bytes": 180,
               "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "stderr_head": "mcp-cli: Pointer \"C:/Program Files/Git/record/body\" is a Windows path, so the shell rewrote it. Under Git Bash write the pointer without its leading slash, for example record/body\n",
               "form": "/record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "rewritten": true,
+              "note": "rewritten by MSYS, CLI names the fix"
             },
             {
               "argv": [
@@ -391,14 +392,14 @@
                 "record/body"
               ],
               "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' 'record/body'",
-              "exit": 2,
-              "stdout_bytes": 0,
-              "stderr_bytes": 30,
-              "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "exit": 0,
+              "stdout_bytes": 1804,
+              "stderr_bytes": 0,
+              "stdout_head": "{\n  \"schemaVersion\": 2,\n  \"ok\": true,\n  \"isError\": false,\n  \"next\": {\n    \"command\": \"mcp-cli\",\n    \"argv\": [\n      \"spill\",\n      \"query\",\n      \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n      \"--within\",\n      \"record/body\"\n    ]\n  },\n  \"source\": {\n    \"ref\": \"5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324\",\n    \"representation\": \"json\",\n    \"legacy\": ",
+              "stderr_head": "",
               "form": "record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "note": "outline"
             },
             {
               "argv": [
@@ -411,16 +412,17 @@
               "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' 'spill' 'query' '5efbe3e81389ede1a72460c519c3f369306c15410f4d3db3cad01a6a539c3324' '--within' '#/record/body'",
               "exit": 2,
               "stdout_bytes": 0,
-              "stderr_bytes": 30,
+              "stderr_bytes": 181,
               "stdout_head": "",
-              "stderr_head": "mcp-cli: Invalid JSON Pointer\n",
+              "stderr_head": "mcp-cli: Pointer \"#C:/Program Files/Git/record/body\" is a Windows path, so the shell rewrote it. Under Git Bash write the pointer without its leading slash, for example record/body\n",
               "form": "#/record/body",
-              "pass": false,
-              "note": "mcp-cli: Invalid JSON Pointer\n"
+              "pass": true,
+              "rewritten": true,
+              "note": "rewritten by MSYS, CLI names the fix"
             }
           ],
-          "pass": false,
-          "note": "/record/body:mcp-cli: Invalid JSON Pointer\n | record/body:mcp-cli: Invalid JSON Pointer\n | #/record/body:mcp-cli: Invalid JSON Pointer\n"
+          "pass": true,
+          "note": "/record/body:named | record/body:ok | #/record/body:named"
         }
       }
     }

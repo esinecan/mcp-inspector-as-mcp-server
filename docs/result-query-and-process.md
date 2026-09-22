@@ -17,6 +17,7 @@ Every call retains the original MCP response before rendering. When a response i
 mcp-cli spill query 0123456789abcdef --json
 mcp-cli spill query 0123456789abcdef --select /record/name --select /record/updated --query 'Node PATH zstd' --json
 mcp-cli spill query 0123456789abcdef --within /record/body --query 'keep-alive' --json
+mcp-cli spill query 0123456789abcdef --within record/body --query 'keep-alive' --json   # Git Bash
 mcp-cli spill get 0123456789abcdef
 ```
 
@@ -24,7 +25,7 @@ Pointers address the logical payload, outside the CLI envelope. Structured conte
 
 Selections report `complete`, `missing`, or `deferred`. A present JSON null remains null. An oversized selection returns a reference instead of a clipped value. Omit both selection and query to inspect an outline with paths, types, counts, and text headings.
 
-Search uses words, not natural-language reasoning. Hits contain verbatim text, the source reference, a pointer, and a block index when applicable. `start` and `end` use UTF-16 code units in the decoded string, with an exclusive end. They are not byte offsets into JSON. A hit marked `windowed` is a bounded excerpt of a longer passage. An excerpt's edges sit on word boundaries: a window that would open or close inside a word is moved to the nearest boundary within 160 code units, so a passage never starts or ends with a fragment of a word. `result.total` is the number of items in the whole answer before paging, the same on every page.
+A pointer may be written `/record/body`, `#/record/body` or `record/body`; the CLI reads the three as one RFC 6901 pointer, and its hints use the last spelling because Git Bash (MSYS) rewrites an argument that starts with `/` or `#/` as a Windows path. A rewritten path is refused with a message that names the slash-free spelling. Search uses words, not natural-language reasoning. Hits contain verbatim text, the source reference, a pointer, and a block index when applicable. `start` and `end` use UTF-16 code units in the decoded string, with an exclusive end. They are not byte offsets into JSON. A hit marked `windowed` is a bounded excerpt of a longer passage. An excerpt's edges sit on word boundaries: a window that would open or close inside a word is moved to the nearest boundary within 160 code units, so a passage never starts or ends with a fragment of a word. `result.total` is the number of items in the whole answer before paging, the same on every page.
 
 The default budget is 4096 UTF-8 bytes, including the pretty-printed response and its newline. `--max-bytes` accepts 1024 through 1048576. A response with `more:true` includes a cursor. Repeat the same selection, scope, and query with `--cursor` to continue. The budget may change between pages. An empty query is an error. Omit it to request an outline.
 
@@ -63,8 +64,8 @@ Read `execution.status` for success or failure and `execution.exitCode` for the 
 {
   "mode": "batch",
   "steps": [
-    {"mode": "process", "executable": "node", "argv": ["-e", "process.exit(7)"]},
-    {"mode": "process", "executable": "node", "argv": ["-e", "console.log('later')"]}
+    { "mode": "process", "executable": "node", "argv": ["-e", "process.exit(7)"] },
+    { "mode": "process", "executable": "node", "argv": ["-e", "console.log('later')"] }
   ]
 }
 ```

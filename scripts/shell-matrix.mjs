@@ -192,13 +192,27 @@ const cases = {
         const r = invoke(shell, ["spill", "query", state.ref, "--within", form]);
         r.form = form;
         r.pass = r.json?.ok === true && r.json?.result?.kind === "outline";
-        r.note = r.pass ? "outline" : (r.json?.error?.message ?? r.stderr_head).slice(0, 80);
+        // Git Bash rewrites the slash form, and the #/ fragment form, into a
+        // drive path before the CLI runs; no CLI change can read the pointer
+        // back. Those cells pass when the CLI names the rewrite and the fix
+        // instead of failing blind. Only record/body survives MSYS.
+        if (shell === "bash" && form !== "record/body") {
+          r.rewritten = true;
+          r.pass = /Windows path.*without its leading slash/.test(r.stderr_head + r.stdout_head);
+        }
+        r.note = r.pass
+          ? r.rewritten
+            ? "rewritten by MSYS, CLI names the fix"
+            : "outline"
+          : (r.json?.error?.message ?? r.stderr_head).slice(0, 80);
         return r;
       });
       return {
         forms: runs,
         pass: runs.every((x) => x.pass),
-        note: runs.map((x) => `${x.form}:${x.pass ? "ok" : x.note}`).join(" | "),
+        note: runs
+          .map((x) => `${x.form}:${x.pass ? (x.rewritten ? "named" : "ok") : x.note}`)
+          .join(" | "),
       };
     },
   },

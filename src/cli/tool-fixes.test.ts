@@ -69,7 +69,7 @@ describe.runIf(existsSync(cli))("built tool-fix interfaces", () => {
     const args = JSON.stringify({ text });
     const v1 = run("call", "scripted.echo", args, "--json");
     expect(JSON.parse(v1.out).result.record.name).toBe("test");
-    expect(JSON.parse(v1.out).result.record.body).toContain("--within /record/body");
+    expect(JSON.parse(v1.out).result.record.body).toContain("--within record/body");
     expect(
       JSON.parse(run("call", "scripted.echo", args, "--intent", "name", "--json").out).result,
     ).toBeTypeOf("string");
