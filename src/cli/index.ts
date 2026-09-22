@@ -436,7 +436,7 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
 
   if (exact && !args.all && rows[0]?.blockedBy) refuseIfBlocked(ctx, rows[0].address);
   const visible = args.all ? rows : rows.filter((r) => !r.blockedBy);
-  const hint = schemaHint(visible, args.schema, exact !== undefined);
+  const hint = schemaHint(visible, args.schema, Boolean(exact));
 
   ctx.out.emit({ profile: ctx.fleet.profile.name, tools: visible, errors, ...hint }, () => {
     const lines: string[] = [];
