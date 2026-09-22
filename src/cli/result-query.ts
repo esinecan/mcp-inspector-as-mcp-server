@@ -25,6 +25,8 @@ export interface QueryEnvelope {
     kind: "selection" | "excerpts" | "outline";
     items: Item[];
     search?: "matched" | "no_match";
+    /** How many items the whole answer holds, before paging. */
+    total: number;
     more: boolean;
     cursor?: string;
   };
@@ -60,6 +62,42 @@ interface Passage {
   text: string;
   block?: number;
 }
+const wordChar = (c: string | undefined) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+
+/**
+ * Move a window's edges off the inside of a word.
+ *
+ * `lo` and `hi` bound the text the window may cover (a line, or a passage).
+ * An edge that already sits on that bound stays. Otherwise the start moves
+ * forward to the next word boundary and the end moves back to the previous
+ * one, each by at most `slack` code units, so an excerpt never opens or closes
+ * with a fragment of a word. A window that is all one word keeps its edges.
+ */
+function snap(
+  text: string,
+  start: number,
+  end: number,
+  lo: number,
+  hi: number,
+  slack = 160,
+): [number, number] {
+  let s = start;
+  let e = end;
+  if (s > lo && wordChar(text[s - 1]) && wordChar(text[s])) {
+    const limit = Math.min(e, s + slack);
+    let i = s;
+    while (i < limit && wordChar(text[i])) i++;
+    if (i < limit) s = i;
+  }
+  if (e < hi && wordChar(text[e - 1]) && wordChar(text[e])) {
+    const limit = Math.max(s, e - slack);
+    let i = e;
+    while (i > limit && wordChar(text[i - 1])) i--;
+    if (i > limit) e = i;
+  }
+  return [s, e];
+}
+
 /** Positions are UTF-16 code units in a decoded string, never serialized JSON offsets. */
 function* segment(text: string, path: string, block?: number): Generator<Passage> {
   let heading = "";
@@ -68,12 +106,14 @@ function* segment(text: string, path: string, block?: number): Generator<Passage
     const line = match[0];
     if (!line.trim()) continue;
     if (/^\s*#{1,6}\s/.test(line)) heading = line.trim();
+    const lineEnd = match.index + line.length;
     // Overlap protects words/phrases across a long-line split.
     for (let n = 0; n < line.length; n += 640) {
       let start = match.index + n;
-      let end = Math.min(match.index + line.length, start + 800);
+      let end = Math.min(lineEnd, start + 800);
       if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start])) start--;
       if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+      [start, end] = snap(text, start, end, match.index, lineEnd);
       yield {
         path,
         heading,
@@ -246,6 +286,9 @@ export function queryResult(
     if (!scope.found) throw new UsageError("Outline scope does not exist");
     tail = outline(scope.value, req.within ?? "");
   }
+  // The whole answer is known before paging, so its size is reported with
+  // every page: a caller reading `more: true` also learns how much is left.
+  const all: Item[] = [...selections, ...tail];
   const out: QueryEnvelope = {
     schemaVersion: 2,
     ok: !source.isError,
@@ -257,16 +300,13 @@ export function queryResult(
       kind: req.query !== undefined ? "excerpts" : selections.length ? "selection" : "outline",
       items: [],
       ...(search ? { search } : {}),
+      total: all.length,
       more: true,
       cursor: cursor(offset + 1),
     },
   };
   let index = 0;
-  function* items() {
-    yield* selections;
-    yield* tail;
-  }
-  for (const original of items()) {
+  for (const original of all) {
     if (index++ < offset) continue;
     let item = original;
     out.result.items.push(item);
@@ -291,6 +331,7 @@ export function queryResult(
         let end = Math.min(text.length, start + width);
         if (/[\uDC00-\uDFFF]/.test(text[start])) start--;
         if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end])) end--;
+        [start, end] = snap(text, start, end, 0, text.length, Math.floor(width / 4));
         item = {
           ...original,
           start: Number(original.start) + start,

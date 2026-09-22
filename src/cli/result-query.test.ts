@@ -37,6 +37,47 @@ describe("retained result query contract", () => {
     expect(serializedBytes(q)).toBeLessThanOrEqual(4096);
     expect(store.get(ref)).toBe(before);
   });
+  it("keeps every excerpt edge on a word boundary and reports the total before paging", () => {
+    // One 3,000-character line of distinct words, so a fixed 800-unit window
+    // would cut inside a word at both edges of every interior passage.
+    const line = Array.from({ length: 400 }, (_, i) => `word${i} needle`).join(" ");
+    const body = `# Long\n${line}\n`;
+    const ref = source({ record: { body } });
+    const q = queryResult(store, {
+      ref,
+      within: "/record/body",
+      query: "needle",
+      maxBytes: 1048576,
+    });
+    expect(q.result.total).toBe(q.result.items.length);
+    expect(q.result.total).toBeGreaterThan(3);
+    for (const hit of q.result.items) {
+      const start = Number(hit.start);
+      const end = Number(hit.end);
+      expect(body.slice(start, end)).toBe(hit.text);
+      const inside = (i: number) =>
+        /[\p{L}\p{N}]/u.test(body[i - 1] ?? " ") && /[\p{L}\p{N}]/u.test(body[i] ?? " ");
+      expect(inside(start)).toBe(false);
+      expect(inside(end)).toBe(false);
+    }
+    // The same total on a later page.
+    const page1 = queryResult(store, {
+      ref,
+      within: "/record/body",
+      query: "needle",
+      maxBytes: 2048,
+    });
+    expect(page1.result.more).toBe(true);
+    const page2 = queryResult(store, {
+      ref,
+      within: "/record/body",
+      query: "needle",
+      maxBytes: 2048,
+      cursor: page1.result.cursor,
+    });
+    expect(page2.result.total).toBe(page1.result.total);
+    expect(page1.result.total).toBe(q.result.total);
+  });
   it("distinguishes null, missing and a deferred selection", () => {
     const ref = source({ present: null, large: "x".repeat(10000), "~/": 0 });
     const q = queryResult(store, { ref, select: ["/present", "/absent", "/large", "/~0~1"] });

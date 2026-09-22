@@ -24,7 +24,7 @@ Pointers address the logical payload, outside the CLI envelope. Structured conte
 
 Selections report `complete`, `missing`, or `deferred`. A present JSON null remains null. An oversized selection returns a reference instead of a clipped value. Omit both selection and query to inspect an outline with paths, types, counts, and text headings.
 
-Search uses words, not natural-language reasoning. Hits contain verbatim text, the source reference, a pointer, and a block index when applicable. `start` and `end` use UTF-16 code units in the decoded string, with an exclusive end. They are not byte offsets into JSON. A hit marked `windowed` is a bounded excerpt of a longer passage.
+Search uses words, not natural-language reasoning. Hits contain verbatim text, the source reference, a pointer, and a block index when applicable. `start` and `end` use UTF-16 code units in the decoded string, with an exclusive end. They are not byte offsets into JSON. A hit marked `windowed` is a bounded excerpt of a longer passage. An excerpt's edges sit on word boundaries: a window that would open or close inside a word is moved to the nearest boundary within 160 code units, so a passage never starts or ends with a fragment of a word. `result.total` is the number of items in the whole answer before paging, the same on every page.
 
 The default budget is 4096 UTF-8 bytes, including the pretty-printed response and its newline. `--max-bytes` accepts 1024 through 1048576. A response with `more:true` includes a cursor. Repeat the same selection, scope, and query with `--cursor` to continue. The budget may change between pages. An empty query is an error. Omit it to request an outline.
 

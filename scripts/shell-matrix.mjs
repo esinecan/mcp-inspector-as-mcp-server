@@ -54,7 +54,7 @@ writeFileSync(
 const argsFile = join(TMP, "args.json");
 writeFileSync(argsFile, '{"name":"pi-stack"}');
 const missingFile = join(TMP, "missing.json");
-const bodyLength = JSON.parse(readFileSync(join(FIX, "record.json"), "utf8")).record.body.length;
+const body = JSON.parse(readFileSync(join(FIX, "record.json"), "utf8")).record.body;
 
 const env = { ...process.env, MCP_CLI_CONFIG: config, MCP_CLI_DAEMON: "0" };
 
@@ -64,7 +64,11 @@ const shells = {
   cmd: {
     name: "cmd.exe",
     quote: (t) => (/^[A-Za-z0-9_./:=#~-]+$/.test(t) ? t : `"${t.replace(/"/g, '\\"')}"`),
-    run: (line) => spawnSync("cmd.exe", ["/d", "/s", "/c", `"${line}"`], { env, windowsVerbatimArguments: true }),
+    run: (line) =>
+      spawnSync("cmd.exe", ["/d", "/s", "/c", `"${line}"`], {
+        env,
+        windowsVerbatimArguments: true,
+      }),
   },
   powershell: {
     name: "Windows PowerShell 5.1",
@@ -111,7 +115,10 @@ function invoke(shell, argv) {
 
 /* ------------------------------------------------------------- cases -- */
 
-const endsInsideWord = (text) => /[\p{L}\p{N}]$/u.test(text);
+// An edge is inside a word when the characters on both sides of it are word
+// characters in the source text; an edge at the field's end is never inside.
+const wordChar = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+const cutsWord = (i) => wordChar(body[i - 1]) && wordChar(body[i]);
 
 const cases = {
   F2: {
@@ -150,11 +157,25 @@ const cases = {
     run: (shell, state) => {
       if (!state.ref) return { skipped: "no ref from F3", pass: false };
       const within = shell === "bash" ? "record/body" : "/record/body";
-      const r = invoke(shell, ["spill", "query", state.ref, "--within", within, "--query", "pi 0.85.1"]);
+      const r = invoke(shell, [
+        "spill",
+        "query",
+        state.ref,
+        "--within",
+        within,
+        "--query",
+        "pi 0.85.1",
+      ]);
       const items = r.json?.result?.items ?? [];
       const total = r.json?.result?.total;
-      const cut = items.filter((i) => typeof i.text === "string" && endsInsideWord(i.text) && i.end !== bodyLength);
-      r.pass = r.json?.ok === true && Number.isInteger(total) && items.length > 0 && cut.length === 0;
+      const cut = items.filter(
+        (i) =>
+          i.path === "/record/body" &&
+          typeof i.text === "string" &&
+          (cutsWord(Number(i.start)) || cutsWord(Number(i.end))),
+      );
+      r.pass =
+        r.json?.ok === true && Number.isInteger(total) && items.length > 0 && cut.length === 0;
       r.note =
         r.json?.ok !== true
           ? (r.json?.error?.message ?? r.stderr_head).slice(0, 120)
@@ -186,7 +207,13 @@ const cases = {
 /* --------------------------------------------------------------- run -- */
 
 const order = ["F2", "F3", "F1", "F4", "F5"];
-const table = { label, when: new Date().toISOString(), node: process.version, cli: CLI, shells: {} };
+const table = {
+  label,
+  when: new Date().toISOString(),
+  node: process.version,
+  cli: CLI,
+  shells: {},
+};
 for (const shell of Object.keys(shells)) {
   const state = {};
   table.shells[shell] = { name: shells[shell].name, cases: {} };
@@ -206,11 +233,13 @@ console.log(`shell matrix (${label})`);
 console.log("shell".padEnd(width) + order.map((id) => id.padEnd(8)).join(""));
 for (const [shell, row] of Object.entries(table.shells)) {
   console.log(
-    row.name.padEnd(width) + order.map((id) => (row.cases[id].pass ? "pass" : "FAIL").padEnd(8)).join(""),
+    row.name.padEnd(width) +
+      order.map((id) => (row.cases[id].pass ? "pass" : "FAIL").padEnd(8)).join(""),
   );
 }
 for (const [shell, row] of Object.entries(table.shells))
-  for (const id of order) console.log(`  ${shell}/${id}: ${row.cases[id].note ?? row.cases[id].skipped}`);
+  for (const id of order)
+    console.log(`  ${shell}/${id}: ${row.cases[id].note ?? row.cases[id].skipped}`);
 console.log(`written ${out}`);
 const allPass = Object.values(table.shells).every((row) => order.every((id) => row.cases[id].pass));
 process.exit(label === "baseline" ? 0 : allPass ? 0 : 1);
