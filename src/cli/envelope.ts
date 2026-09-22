@@ -32,6 +32,8 @@ export interface Envelope {
   result: unknown;
   spill?: string;
   withheldBytes?: number;
+  /** JSON Pointer of the first leaf that was withheld, so `next` can reach it. */
+  withheldPath?: string;
 }
 
 /** The bytes of one text in the UTF-8 the wire carries, the only measure here. */
@@ -60,34 +62,38 @@ function shrink(
   digest: string,
   seen: WeakSet<object>,
   path = "",
-): { value: unknown; withheld: number } {
+): { value: unknown; withheld: number; firstPath?: string } {
   if (typeof value === "string") {
     const size = byteCount(value);
     if (size <= leafBudget) return { value, withheld: 0 };
-    return { value: marker(size, digest, path), withheld: size };
+    return { value: marker(size, digest, path), withheld: size, firstPath: path };
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) return { value, withheld: 0 };
     seen.add(value);
     let withheld = 0;
+    let firstPath: string | undefined;
     const out = value.map((item, index) => {
       const r = shrink(item, leafBudget, digest, seen, `${path}/${index}`);
       withheld += r.withheld;
+      firstPath ??= r.firstPath;
       return r.value;
     });
-    return { value: out, withheld };
+    return { value: out, withheld, firstPath };
   }
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) return { value, withheld: 0 };
     seen.add(value);
     let withheld = 0;
+    let firstPath: string | undefined;
     const out: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
       const r = shrink(item, leafBudget, digest, seen, `${path}/${pointerToken(key)}`);
       withheld += r.withheld;
+      firstPath ??= r.firstPath;
       out[key] = r.value;
     }
-    return { value: out, withheld };
+    return { value: out, withheld, firstPath };
   }
   return { value, withheld: 0 };
 }
@@ -132,18 +138,22 @@ export function buildEnvelope(text: string, rendered: string, opts: EnvelopeOpti
 
   const digest = opts.store.put(text);
   if (opts.sourceRef) opts.store.linkDerived?.(digest, opts.sourceRef);
-  const { value, withheld } = shrink(
+  // The caller sees one ref: the source when there is one, else this digest.
+  // The marker, `next` and `spill` all name it, so a caller has one handle
+  // for `spill query` and `spill get` alike.
+  const ref = opts.sourceRef ?? digest;
+  const { value, withheld, firstPath } = shrink(
     parsed.value,
     opts.prune.headBytes,
-    opts.sourceRef ?? digest,
+    ref,
     new WeakSet(),
   );
   if (withheld === 0) {
     // Large, but with no single leaf big enough to replace. Answering whole is
     // the only honest option; the handle still says where the copy is.
-    return { result: value, spill: digest, withheldBytes: 0 };
+    return { result: value, spill: ref, withheldBytes: 0 };
   }
-  return { result: value, spill: digest, withheldBytes: withheld };
+  return { result: value, spill: ref, withheldBytes: withheld, withheldPath: firstPath };
 }
 
 /** The joined text of a result's text blocks, unpruned and unencoded. */

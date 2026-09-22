@@ -582,9 +582,12 @@ function callEnvelope(
 
   const out: Record<string, unknown> = { ok: !isError, isError, lane, result: envelope.result };
   if (envelope.spill !== undefined) {
+    // One ref, named three times for three readers: `spill` for a v1 caller
+    // doing `spill get`, `source.ref` for one doing `spill query`, and `next`
+    // as the command that reaches the first withheld field.
     out.spill = envelope.spill;
-    out.source = { ref: render.sourceRef ?? envelope.spill };
-    out.next = spillHint(render.sourceRef ?? envelope.spill);
+    out.source = { ref: envelope.spill };
+    out.next = spillHint(envelope.spill, envelope.withheldPath);
     out.withheldBytes = envelope.withheldBytes ?? 0;
   }
   return out;

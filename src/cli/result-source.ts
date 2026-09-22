@@ -41,6 +41,33 @@ function logical(mcp: unknown): Pick<ResultSource, "kind" | "value" | "isError">
   return { kind: "json", value: mcp, isError };
 }
 
+/**
+ * The bytes a caller means when they `spill get` a source ref: the result's
+ * own text, not the provenance wrapper the store keeps around it.
+ *
+ * One text block comes back byte for byte, which is what a table or a record
+ * was. Structured content, or several blocks, are printed as JSON. A stored
+ * text that is not a source wrapper is returned unchanged, so a derived digest
+ * still reads back exactly what was put.
+ */
+export function unwrapSource(stored: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    return stored;
+  }
+  const r = parsed as { $source?: string; mcp?: unknown } | null;
+  if (!r || r.$source !== TAG || !Object.hasOwn(r, "mcp")) return stored;
+  const mcp = (r.mcp ?? {}) as { structuredContent?: unknown; content?: unknown[] };
+  if (mcp.structuredContent !== undefined) return JSON.stringify(mcp.structuredContent, null, 2);
+  if (Array.isArray(mcp.content) && mcp.content.length === 1) {
+    const b = mcp.content[0] as { type?: string; text?: string };
+    if (b.type === "text" && typeof b.text === "string") return b.text;
+  }
+  return JSON.stringify(mcp.content ?? mcp, null, 2);
+}
+
 export function readSource(store: SpillStore, ref: string): ResultSource {
   const full = store.resolve(ref);
   const text = full === null ? null : store.get(full);

@@ -704,13 +704,19 @@ $ mcp-cli --json call memory-store.memory_read '{"name":"pi-stack"}' | jq -r .re
 ```json
 { "ok": true, "isError": false, "lane": "daemon",
   "result": { "record": { "updated": "2026-09-06 claude",
-                          "body": "[18,432 bytes withheld. mcp-cli spill get 7f3a...]" } },
-  "spill": "7f3a...", "withheldBytes": 18432 }
+                          "body": "[18,432 bytes withheld. mcp-cli spill query 7f3a... --within /record/body]" } },
+  "spill": "7f3a...", "source": { "ref": "7f3a..." },
+  "next": { "command": "mcp-cli", "argv": ["spill", "query", "7f3a...", "--within", "/record/body"],
+            "text": "mcp-cli spill query 7f3a... --within /record/body" },
+  "withheldBytes": 18432 }
 ```
 
-`spill` and `withheldBytes` appear only when something was withheld, and
-`mcp-cli spill get <digest>` returns the whole result. On that record the
-envelope is 822 bytes where the whole payload is 19,390.
+`spill`, `source`, `next` and `withheldBytes` appear only when something was
+withheld, and they name one ref. `next` is the command that reaches the first
+withheld field: `spill query <ref> --within <pointer>` prints its outline, and
+`--query "<words>"` or `--select <pointer>` narrow it further.
+`mcp-cli spill get <ref>` returns the whole result byte for byte. On that
+record the envelope is 822 bytes where the whole payload is 19,390.
 
 `--intent` under `--json` answers with the narrowed text, the same answer text
 mode gives, because an intent asked for an answer rather than a document.

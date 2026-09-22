@@ -1,6 +1,6 @@
 {
   "label": "candidate",
-  "when": "2026-09-21T23:58:06.068Z",
+  "when": "2026-09-22T00:02:33.124Z",
   "node": "v24.11.1",
   "cli": "C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js",
   "shells": {
@@ -36,12 +36,12 @@
           ],
           "line": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js\" --json call frozen.read --args-file \"C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json\"",
           "exit": 0,
-          "stdout_bytes": 1209,
+          "stdout_bytes": 1271,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
-          "pass": false,
-          "note": "oneRef=false nextHasWithin=false"
+          "pass": true,
+          "note": "oneRef=true nextHasWithin=true"
         },
         "F1": {
           "title": "quote-free --arg",
@@ -176,12 +176,12 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json'",
           "exit": 0,
-          "stdout_bytes": 1209,
+          "stdout_bytes": 1271,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
-          "pass": false,
-          "note": "oneRef=false nextHasWithin=false"
+          "pass": true,
+          "note": "oneRef=true nextHasWithin=true"
         },
         "F1": {
           "title": "quote-free --arg",
@@ -316,12 +316,12 @@
           ],
           "line": "'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\dist\\cli\\index.js' '--json' 'call' 'frozen.read' '--args-file' 'C:\\Users\\yepis\\dev\\mcp-inspector-as-mcp-server\\tests\\shell-matrix\\.tmp\\args.json'",
           "exit": 0,
-          "stdout_bytes": 1209,
+          "stdout_bytes": 1271,
           "stderr_bytes": 0,
           "stdout_head": "{\n  \"ok\": true,\n  \"isError\": false,\n  \"lane\": \"ephemeral\",\n  \"result\": {\n    \"ok\": true,\n    \"record\": {\n      \"type\": \"Reference\",\n      \"name\": \"pi-stack\",\n      \"description\": \"Windows pi rig layout, pi 0.85.1 on glm-5.3-flash, MCP parity, the isession keep-alive hang\",\n      \"partition\": \"eren\",\n      \"created\": \"2026-08-24 migration\",\n      \"updated\": \"2026-09-06 claude\",\n      \"form\": \"fact\"",
           "stderr_head": "",
-          "pass": false,
-          "note": "oneRef=false nextHasWithin=false"
+          "pass": true,
+          "note": "oneRef=true nextHasWithin=true"
         },
         "F1": {
           "title": "quote-free --arg",

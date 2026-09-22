@@ -56,6 +56,26 @@ describe("buildEnvelope", () => {
     expect(s.puts[0]).toBe(text);
   });
 
+  it("names one ref in the marker, in spill and as the path next reaches", () => {
+    const s = store();
+    const sourceRef = "5".repeat(64);
+    const text = JSON.stringify({ record: { updated: "2026-09-06", body: "x".repeat(9000) } });
+    const out = buildEnvelope(text, text, { prune: PRUNE, store: s, sourceRef });
+    expect(out.spill).toBe(sourceRef);
+    expect(out.withheldPath).toBe("/record/body");
+    const body = (out.result as { record: { body: string } }).record.body;
+    expect(body).toContain(`spill query ${sourceRef} --within /record/body`);
+    expect(body).not.toContain("d".repeat(64));
+  });
+
+  it("falls back to the digest as the one ref when there is no source", () => {
+    const text = JSON.stringify({ record: { body: "x".repeat(9000) } });
+    const out = buildEnvelope(text, text, { prune: PRUNE, store: store() });
+    expect(out.spill).toBe("d".repeat(64));
+    expect(out.withheldPath).toBe("/record/body");
+    expect((out.result as { record: { body: string } }).record.body).toContain("d".repeat(64));
+  });
+
   it("leaves a short leaf alone even when the whole document is oversize", () => {
     const items = Array.from({ length: 900 }, (_, i) => ({ id: i, tag: "short" }));
     const text = JSON.stringify({ items });

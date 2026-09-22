@@ -118,8 +118,11 @@ describe.runIf(existsSync(cli))("built tool-fix interfaces", () => {
       { path: "/value", status: "complete", value: null },
       { path: "/absent", status: "missing" },
     ]);
+    // `spill get` on a source ref prints the result's own text; the stored
+    // wrapper stays as written, which `spill path` still points at.
     const raw = run("spill", "get", ref);
-    expect(raw.out.trimEnd()).toBe(store.get(ref));
+    expect(raw.out.trimEnd()).toBe('{"value":null,"body":"needle"}');
+    expect(store.get(ref)).toContain('"$source":"mcp-cli-source-v1"');
     expect(
       readdirSync(join(dir, "spill")).filter((f) => f.endsWith(".derived.json")).length,
     ).toBeGreaterThan(0);

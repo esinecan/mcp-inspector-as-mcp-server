@@ -27,6 +27,7 @@ import {
 import { join, resolve } from "path";
 import type { Output } from "./output.js";
 import { UsageError } from "./errors.js";
+import { unwrapSource } from "./result-source.js";
 
 /** A content-addressed store of spilled results. */
 export interface SpillStore {
@@ -207,11 +208,14 @@ export function runSpillCommand(argv: string[], store: SpillStore, out: Output):
     return 0;
   }
 
-  const bytes = store.get(digest);
-  if (bytes === null) {
+  const stored = store.get(digest);
+  if (stored === null) {
     out.note(`nothing is spilled under "${digest}"`);
     return 1;
   }
+  // A source ref reads back as the result's own text; a plain digest as what
+  // was put. Either way the caller gets the bytes the marker withheld.
+  const bytes = unwrapSource(stored);
   out.emit(bytes, () => bytes);
   return 0;
 }
