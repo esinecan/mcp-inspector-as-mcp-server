@@ -436,8 +436,9 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
 
   if (exact && !args.all && rows[0]?.blockedBy) refuseIfBlocked(ctx, rows[0].address);
   const visible = args.all ? rows : rows.filter((r) => !r.blockedBy);
+  const hint = schemaHint(visible, args.schema, exact !== undefined);
 
-  ctx.out.emit({ profile: ctx.fleet.profile.name, tools: visible, errors }, () => {
+  ctx.out.emit({ profile: ctx.fleet.profile.name, tools: visible, errors, ...hint }, () => {
     const lines: string[] = [];
     if (visible.length === 0) lines.push("(no tools)");
     const width = columnWidth(visible.map((r) => r.address));
@@ -454,12 +455,33 @@ async function cmdTools(args: ParsedArgs): Promise<number> {
     for (const e of errors) {
       lines.push(`! ${e.server}: ${e.error}`);
     }
+    if (hint) lines.push(`For one tool's schema: ${hint.next.text}`);
     return lines.join("\n");
   });
 
   // A per-server failure is reported but does not fail the run, unless the
   // caller asked for exactly that one server.
   return errors.length > 0 && names.length === 1 ? EXIT_FAILURE : EXIT_OK;
+}
+
+/**
+ * The single-tool form, offered after a `--schema` listing that printed more
+ * than one tool's schema.
+ *
+ * A caller who wanted one argument shape has just paid for every tool's, and
+ * the exact address that answers with one is not something the listing shows.
+ * The hint names it with the first tool listed, so the next call can be
+ * typed from what is on screen. An exact address, or a listing of one tool,
+ * needs no hint.
+ */
+export function schemaHint(
+  rows: ToolRow[],
+  schema: boolean,
+  exact: boolean,
+): { next: { command: string; argv: string[]; text: string } } | undefined {
+  if (!schema || exact || rows.length < 2) return undefined;
+  const argv = ["tools", rows[0].address, "--schema"];
+  return { next: { command: "mcp-cli", argv, text: `mcp-cli ${argv.join(" ")}` } };
 }
 
 /* ----------------------------------------------------------------- call -- */

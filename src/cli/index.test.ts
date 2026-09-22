@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, utimesSync, existsSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { main } from "./index.js";
+import { main, schemaHint } from "./index.js";
 
 /**
  * These drive the real command bodies. Every command here answers from the
@@ -157,6 +157,22 @@ describe("the blocklist refuses before any connection", () => {
     const r = await run("servers", "--profile", "ghost");
     expect(r.code).toBe(2);
     expect(r.err).toContain('Profile "ghost" is not defined');
+  });
+});
+
+describe("the single-tool schema hint", () => {
+  const row = (name: string) => ({ address: `memory-store.${name}`, server: "memory-store", name });
+
+  it("names the exact address after a listing that printed more than one schema", () => {
+    const hint = schemaHint([row("memory_search"), row("memory_read")], true, false);
+    expect(hint?.next.argv).toEqual(["tools", "memory-store.memory_search", "--schema"]);
+    expect(hint?.next.text).toBe("mcp-cli tools memory-store.memory_search --schema");
+  });
+
+  it("stays silent without --schema, for an exact address, or for one tool", () => {
+    expect(schemaHint([row("a"), row("b")], false, false)).toBeUndefined();
+    expect(schemaHint([row("a")], true, true)).toBeUndefined();
+    expect(schemaHint([row("a")], true, false)).toBeUndefined();
   });
 });
 
