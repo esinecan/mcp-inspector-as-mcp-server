@@ -515,10 +515,10 @@ function startSteeringHttpServer(): void {
  * Main server entry point
  */
 async function main(): Promise<void> {
-  console.error("[mcp-inspector] Starting MCP Inspector server (v2.1.0)...");
+  console.error("[mcp-inspector] Starting MCP Inspector server (v2.2.0)...");
 
   const server = new Server(
-    { name: "mcp-inspector", version: "2.1.0" },
+    { name: "mcp-inspector", version: "2.2.0" },
     { capabilities: { tools: {} } },
   );
 

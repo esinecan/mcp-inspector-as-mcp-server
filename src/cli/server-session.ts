@@ -21,7 +21,7 @@ import { CliError } from "./errors.js";
 import type { Operation } from "../supervise/operation.js";
 
 export const CLIENT_NAME = "mcp-cli";
-export const CLIENT_VERSION = "2.1.0";
+export const CLIENT_VERSION = "2.2.0";
 
 /** What a command learns about the server it is talking to. */
 export interface ConnectionInfo {

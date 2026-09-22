@@ -1,6 +1,6 @@
 {
   "name": "mcp-inspector-as-mcp-server",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "A lean MCP server that enables LLMs to inspect and test other MCP servers",
   "author": "Eren Sinecan",
   "repository": {

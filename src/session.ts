@@ -186,7 +186,7 @@ export class SessionRegistry {
 
     // Create client
     const client = new Client(
-      { name: "mcp-inspector", version: "2.1.0" },
+      { name: "mcp-inspector", version: "2.2.0" },
       { versionNegotiation: versionNegotiationFor(config) },
     );
 

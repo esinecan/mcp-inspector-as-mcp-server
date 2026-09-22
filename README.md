@@ -252,7 +252,7 @@ The bin entry is `mcp-cli`. Install the package globally, or link this checkout:
 ```bash
 npm run build
 npm link            # or: npm install -g .
-mcp-cli --version   # 2.1.0
+mcp-cli --version   # 2.2.0
 ```
 
 Then build a config from an existing Claude Code config:
@@ -982,7 +982,15 @@ npm run typecheck    # type-check without emitting
 
 ## Changelog
 
-### Unreleased
+### v2.2.0
+
+Five caller-facing fixes from pilot-05 (2026-09-22), each checked through cmd.exe, Windows PowerShell 5.1 and Git Bash by `scripts/shell-matrix.mjs`; see [tests/shell-matrix/README.md](tests/shell-matrix/README.md).
+
+- Added `--arg key=value` and `--arg-json key=<json>`: one call argument per flag with no quoting rule in any shell, a dotted key nests, a value is a string unless `--arg-json` names its type. Windows PowerShell 5.1 strips the quotes from inline JSON, so this is the form to use there
+- A `--json` failure is reported once, as the envelope on stdout; nothing repeats it on stderr. Text mode is unchanged
+- A withheld-body envelope names one ref: `spill`, `source.ref`, the marker and `next` all carry the source ref, `next` reaches the first withheld field with `--within`, and `spill get <ref>` prints the result's own text byte for byte
+- A `spill query` excerpt never opens or closes inside a word, and `result.total` says how many items the whole answer holds before paging
+- A pointer may be written `record/body`, `/record/body` or `#/record/body`; hints use the first because Git Bash (MSYS) rewrites the other two as Windows paths, and a rewritten path is refused with a message that names the fix
 
 - `--json` prints one envelope for `call`, `{ok, isError, lane, result}` on success to match the failure envelope it already printed. A JSON payload arrives parsed instead of escaped inside a string, so one `jq` hop reaches a field, and an oversize result is pruned by shape rather than by text: every key survives and only a string leaf over `pruning.headBytes` is replaced, with `spill` and `withheldBytes` beside it. On a 19,390-byte memory record the envelope is 822 bytes. Every other command's `--json` output is unchanged
 - An address that resolves to nothing answers with what it could determine: the call that would have worked when one tool is within two edits, that server's whole tool list when only the server is known, and every server with the tools it last showed when neither is. The widest of the three is read from `<stateDir>/tools.json`, which every successful listing writes, so it costs 0.3 s instead of a 25 s fan-out and never dials a failing server
