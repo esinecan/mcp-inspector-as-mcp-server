@@ -170,10 +170,25 @@ const TOOLS: Tool[] = [
   {
     name: "insp_tools_list",
     description:
-      "List all tools exposed by an MCP server. Uses ephemeral connection unless session_id is provided.",
+      "List the tools exposed by an MCP server. Uses ephemeral connection unless session_id is provided. A server with many tools can return more text than one tool result holds: call with brief=true for names and descriptions only, then with names or match for the schemas you need.",
     inputSchema: {
       type: "object",
-      properties: connectionProperties,
+      properties: {
+        ...connectionProperties,
+        names: {
+          type: "array",
+          items: { type: "string" },
+          description: "Return only the tools with these exact names.",
+        },
+        match: {
+          type: "string",
+          description: "Return only the tools whose name contains this text, case-insensitive.",
+        },
+        brief: {
+          type: "boolean",
+          description: "Return only the name and description of each tool, without inputSchema (default false).",
+        },
+      },
     },
   },
   {
@@ -374,8 +389,20 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     // ============================================
     // Existing Tools (updated for hybrid mode)
     // ============================================
-    case "insp_tools_list":
-      return listTools(config, sessionId);
+    case "insp_tools_list": {
+      const { tools } = await listTools(config, sessionId);
+      const names = Array.isArray(args.names) ? new Set(args.names as string[]) : undefined;
+      const match = typeof args.match === "string" ? args.match.toLowerCase() : undefined;
+      const picked = tools.filter(
+        (tool) =>
+          (!names || names.has(tool.name)) && (!match || tool.name.toLowerCase().includes(match)),
+      );
+      const shaped =
+        args.brief === true
+          ? picked.map((tool) => ({ name: tool.name, description: tool.description }))
+          : picked;
+      return { tools: shaped, total: tools.length, returned: shaped.length };
+    }
 
     case "insp_tools_call": {
       const toolName = args.tool_name as string;
