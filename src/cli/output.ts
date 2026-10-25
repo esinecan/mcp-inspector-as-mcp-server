@@ -165,9 +165,11 @@ export function renderContent(result: unknown, opts?: RenderOptions): string {
         `--intent narrowed a sampled result; inspect with ${spillHint(opts.sourceRef ?? digest).text}`,
       );
     }
-    return searchStored(widest.join("\n"), opts.intent, {
-      budgetBytes: opts.intentBudget ?? DEFAULT_PRUNING.intentBudget,
-    }).text;
+    const budget = opts.intentBudget ?? DEFAULT_PRUNING.intentBudget;
+    const found = searchStored(widest.join("\n"), opts.intent, { budgetBytes: budget });
+    if (found.matchesWithheld === 0 || found.chunksReturned === 0) return found.text;
+    const n = found.matchesWithheld;
+    return `${found.text}\n[--intent: ${n} more matching ${n === 1 ? "chunk" : "chunks"} did not fit the intent budget of ${budget}]`;
   }
   if (r.structuredContent !== undefined) return JSON.stringify(r.structuredContent, null, 2);
   return JSON.stringify(result, null, 2);

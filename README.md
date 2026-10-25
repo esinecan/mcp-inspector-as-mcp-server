@@ -763,6 +763,13 @@ record the envelope is 822 bytes where the whole payload is 19,390.
 `--intent` under `--json` answers with the narrowed text, the same answer text
 mode gives, because an intent asked for an answer rather than a document.
 
+When chunks that match the intent do not fit `pruning.intentBudget`, the
+answer ends with one line that counts them, for example
+`[--intent: 1 more matching chunk did not fit the intent budget of 2000]`.
+That line comes after the budgeted text. When the result was spilled, the
+stderr note names its ref, and `mcp-cli spill query <ref> --query "<words>"`
+searches the decoded result.
+
 Every other command's `--json` output is the value that command built, printed
 byte for byte: `servers`, `tools`, `info`, `daemon status` and `bridge exec`
 are unchanged.

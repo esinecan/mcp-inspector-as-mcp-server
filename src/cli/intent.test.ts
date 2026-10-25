@@ -79,6 +79,12 @@ describe("searchStored chunk fidelity", () => {
 });
 
 describe("searchStored fallbacks and markers", () => {
+  it("counts the matching chunks the budget left out", () => {
+    const text = ["needle 1", "filler", "needle 2"].join("\n\n");
+    const result = searchStored(text, "needle", { budgetBytes: 8 });
+    expect(result.chunksReturned).toBe(1);
+    expect(result.matchesWithheld).toBe(1);
+  });
   it("returns the head of the text, and says so, when the intent matches nothing", () => {
     const text = records({});
     const result = searchStored(text, "zzzz", { budgetBytes: 70 });

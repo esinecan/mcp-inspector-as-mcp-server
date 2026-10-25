@@ -24,6 +24,7 @@ export interface IntentResult {
   text: string;
   chunksReturned: number;
   chunksTotal: number;
+  matchesWithheld: number;
 }
 
 /** Lines per chunk when the text has no blank line to split on. */
@@ -199,6 +200,7 @@ export function searchStored(text: string, intent: string, opts: IntentOptions):
       text: head.length > 0 ? `${head}\n${notice}` : notice,
       chunksReturned: 0,
       chunksTotal: chunks.length,
+      matchesWithheld: scored.length,
     };
   }
 
@@ -206,5 +208,6 @@ export function searchStored(text: string, intent: string, opts: IntentOptions):
     text: assemble(),
     chunksReturned: picked.length,
     chunksTotal: chunks.length,
+    matchesWithheld: scored.length - picked.length,
   };
 }

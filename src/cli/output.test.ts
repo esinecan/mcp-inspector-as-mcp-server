@@ -101,6 +101,30 @@ describe("the --json contract over a real captured result", () => {
 });
 
 describe("the pruning and intent wiring over a real captured result", () => {
+  it("states the matching chunks an --intent answer left out", () => {
+    const record = readFileSync(
+      join(__dirname, "..", "..", "tests", "shell-matrix", "record.json"),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    const { store } = recordingStore("0123456789abcdef");
+    const rendered = renderContent(
+      { content: [{ type: "text", text: record }] },
+      {
+        describeBlocks: true,
+        format: "raw",
+        prune: { thresholdBytes: 8000, headBytes: 2000 },
+        store,
+        note: () => {},
+        intent: "name updated isession keep-alive caveat",
+        intentBudget: 2000,
+      },
+    );
+    expect(rendered.startsWith('{\n  "ok": true,')).toBe(true);
+    expect(
+      rendered.endsWith("[--intent: 1 more matching chunk did not fit the intent budget of 2000]"),
+    ).toBe(true);
+    expect(rendered).not.toContain("spill query");
+  });
   const parsed = JSON.parse(readFileSync(FIXTURE, "utf8")) as {
     content: Array<{ type?: string; text?: string }>;
   };
