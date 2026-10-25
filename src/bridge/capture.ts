@@ -16,7 +16,23 @@ export interface CaptureInfo {
   observedBytes: number;
   sha256: string;
   complete: boolean;
+  bom?: ByteOrderMark;
   error?: string;
+}
+
+export type ByteOrderMark = "utf-8" | "utf-16le";
+
+export function byteOrderMark(head: Buffer): ByteOrderMark | undefined {
+  if (head.length >= 3 && head[0] === 0xef && head[1] === 0xbb && head[2] === 0xbf) return "utf-8";
+  if (head.length >= 2 && head[0] === 0xff && head[1] === 0xfe) return "utf-16le";
+  return undefined;
+}
+
+export function decodeDisplay(bytes: Buffer): string {
+  const bom = byteOrderMark(bytes);
+  if (bom === "utf-16le") return bytes.subarray(2).toString("utf16le");
+  if (bom === "utf-8") return bytes.subarray(3).toString("utf8");
+  return bytes.toString("utf8");
 }
 
 const isArtifact = (s: string) => /^[0-9a-f-]{36}\.(stdout|stderr)\.raw$/.test(s);
@@ -47,6 +63,7 @@ export class RawCapture {
   private observed = 0;
   private error?: string;
   private hash = createHash("sha256");
+  private head = Buffer.alloc(0);
   private readonly dir: string;
   constructor(
     stream: "stdout" | "stderr",
@@ -63,6 +80,7 @@ export class RawCapture {
   }
   push(chunk: Buffer): void {
     this.observed += chunk.length;
+    if (this.head.length < 3) this.head = Buffer.concat([this.head, chunk.subarray(0, 3 - this.head.length)]);
     if (this.fd === undefined || this.error) return;
     const lock = join(this.dir, ".capture-lock");
     try {
@@ -103,12 +121,14 @@ export class RawCapture {
       closeSync(this.fd);
       this.fd = undefined;
     }
+    const bom = byteOrderMark(this.head);
     return {
       path: this.path,
       bytes: this.bytes,
       observedBytes: this.observed,
       sha256: this.hash.digest("hex"),
       complete: !this.error && this.bytes === this.observed,
+      ...(bom ? { bom } : {}),
       ...(this.error ? { error: this.error } : {}),
     };
   }

@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { RawCapture } from "./capture.js";
+import { RawCapture, decodeDisplay } from "./capture.js";
 import { BridgeExecError, killTree, type ExecOptions, type ExecResult } from "./exec.js";
 
 export interface ProcessRequest {
@@ -95,8 +95,8 @@ export async function runProcess(raw: unknown, options: ExecOptions): Promise<Ex
                 : "failed";
       resolve({
         exit: timedOut ? 124 : (exitCode ?? 1),
-        stdout: Buffer.concat(display.stdout).toString("utf8"),
-        stderr: Buffer.concat(display.stderr).toString("utf8"),
+        stdout: decodeDisplay(Buffer.concat(display.stdout)),
+        stderr: decodeDisplay(Buffer.concat(display.stderr)),
         execution: {
           status,
           exitCode,

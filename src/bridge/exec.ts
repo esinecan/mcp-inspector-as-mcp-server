@@ -19,7 +19,7 @@
  */
 
 import { runProcess, runBatch } from "./process.js";
-import { RawCapture, type CaptureInfo, type CaptureOptions } from "./capture.js";
+import { RawCapture, decodeDisplay, type CaptureInfo, type CaptureOptions } from "./capture.js";
 import { spawn } from "child_process";
 import type { PathMap } from "./path-map.js";
 
@@ -178,7 +178,7 @@ export function killTree(pid: number | undefined): void {
 
 /** Decode captured bytes as UTF-8. Bad bytes become U+FFFD rather than failing. */
 function decode(chunks: Buffer[]): string {
-  return Buffer.concat(chunks).toString("utf8");
+  return decodeDisplay(Buffer.concat(chunks));
 }
 
 /**

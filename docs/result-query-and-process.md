@@ -78,6 +78,12 @@ Legacy `{ "cmd": "..." }` requests retain their shell behavior. `statusScope:"sh
 
 Raw stdout and stderr are captured before decoding or path rewriting. Each capture reports its local file path, SHA-256, retained and observed byte counts, and completeness. Display previews are separate. A complete capture preserves binary bytes, including output beyond the display limit and stderr written before a timeout.
 
+`stdout` and `stderr` in the result are display previews, decoded as UTF-8 with invalid bytes replaced by U+FFFD. A stream that starts with the UTF-16LE byte order mark `FF FE` is decoded as UTF-16LE instead, and a leading UTF-8 byte order mark `EF BB BF` is left out of the preview. `capture.stdout.bom` and `capture.stderr.bom` name the mark that was found, `utf-8` or `utf-16le`, and are absent when the stream has no mark. The raw capture file holds the bytes as written, mark included. A consumer that parses evidence reads the raw file and decodes it by `bom`, or by the encoding that the child declares.
+
+Windows PowerShell 5.1 writes UTF-16LE with a byte order mark through `>` and `Out-File`, and it writes redirected standard output in the console output encoding. To capture its output, run `powershell.exe` in process mode, put `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false);` first in `-Command`, and parse the result, not a file that `>` wrote.
+
+A `.cmd` wrapper that a caller writes for shell mode is ASCII with CRLF line ends, quotes every path, and ends with `exit /b %ERRORLEVEL%`. In Windows PowerShell 5.1, write it with `Set-Content -Encoding ascii`, because `>` and `Out-File` write UTF-16LE.
+
 The `bridge` config accepts `captureDir`, `maxCaptureBytes`, and `maxCaptureTotalBytes`. Defaults are the user directory `.agents/mcp-cli-capture`, 64 MiB per stream, and 1 GiB total. Capture contention, exhausted storage limits, or write errors mark the artifact incomplete while preserving the process result. Inspect both execution and capture status when collecting evidence. A stale `.capture-lock` after a killed writer requires operator recovery after checking that no writer is active.
 
 ```powershell

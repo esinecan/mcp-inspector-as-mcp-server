@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { execBridged, type ExecOptions } from "./exec.js";
 import { PathMap } from "./path-map.js";
-import { pruneCaptures } from "./capture.js";
+import { decodeDisplay, pruneCaptures } from "./capture.js";
 
 let dir: string, options: ExecOptions;
 beforeEach(() => {
@@ -138,5 +138,23 @@ describe("checked process interface", () => {
     const p = execBridged(request("setInterval(()=>{},100)"), { ...options, signal: abort.signal });
     setTimeout(() => abort.abort(), 100);
     expect((await p).execution?.status).toBe("cancelled");
+  });
+  it("decodes a UTF-16LE stream by its byte order mark and names the mark", async () => {
+    const r = await execBridged(
+      request(`process.stdout.write(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('{"a":"\\u00e9"}', "utf16le")]))`),
+      options,
+    );
+    expect(JSON.parse(r.stdout)).toEqual({ a: "é" });
+    expect(r.capture!.stdout.bom).toBe("utf-16le");
+    expect(readFileSync(r.capture!.stdout.path!).subarray(0, 2)).toEqual(Buffer.from([0xff, 0xfe]));
+  });
+  it("leaves a UTF-8 byte order mark out of the preview and names it", async () => {
+    const r = await execBridged(request("process.stdout.write(Buffer.from([0xef, 0xbb, 0xbf, 0x7b, 0x7d]))"), options);
+    expect(JSON.parse(r.stdout)).toEqual({});
+    expect(r.capture!.stdout.bom).toBe("utf-8");
+  });
+  it("decodes display bytes by their mark, and as UTF-8 without one", () => {
+    expect(decodeDisplay(Buffer.from([0x7b, 0x7d]))).toBe("{}");
+    expect(decodeDisplay(Buffer.from([0xff, 0xfe, 0x7b, 0x00, 0x7d, 0x00]))).toBe("{}");
   });
 });
